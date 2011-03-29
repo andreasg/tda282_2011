@@ -1,47 +1,41 @@
 module TypeChecker where
 
-import Control.Monad.Reader
 
-import Debug.Trace
-
+-- BNF Converter imports
 import AbsJavalette
 import AbsJavalette
 import PrintJavalette
 import ErrM
-import Data.List (nubBy)
 
+import Debug.Trace
+import Data.List (nubBy)
+import Control.Monad.Reader
+
+
+-- Environment, pair each identifier with it's type
 type Env = [(Ident,Type)]
 
 type State a = ReaderT Env Err a
 
-testP = Program [FnDef Int (Ident "main") [] (Block [SExp (EApp (Ident "printInt") [ELitDoub 1.0]),Ret (ELitInt 0)])]
-testProg :: Program
-testProg = Program [FnDef Int (Ident "fun0") [Arg Doub (Ident "x")
-                                       ,Arg Doub (Ident "y")] (Block [Empty])
-                   ,FnDef Doub (Ident "fun1") [] (Block [Empty])]
-
-stdEnv = [(Ident "printInt",    Fun Void [Int]),
-          (Ident "printDouble", Fun Void [Doub]),
-          (Ident "readDouble",  Fun Doub []),
-          (Ident "readInt",     Fun Int []),
-          (Ident "printString", Fun Void [Void])]
-
-typecheck :: Program -> Err Env
-typecheck (Program fs) =  do 
-  env <- runReaderT (buildSig fs) stdEnv
-  runReaderT (typeCheck' fs) env
-  
+-- Standard Environment, containing all 'std' functions of Javalette
+stdEnv = [(Ident "printInt",    Fun Void [Int])
+         ,(Ident "printDouble", Fun Void [Doub])
+         ,(Ident "readDouble",  Fun Doub [])
+         ,(Ident "readInt",     Fun Int [])
+         ,(Ident "printString", Fun Void [Void])]
 
 
-
-typeCheck' :: [TopDef] -> State Env
-typeCheck' fs = do mapM_ checkTopDef fs
-                   ask
+-- Check if a program is type correct
+typecheck :: Program -> Err Bool
+typecheck p@(Program fs) = runReaderT (buildSig fs) stdEnv >>= 
+                           runReaderT (mapM checkTopDef fs) >> if returnCheck fs 
+                                                                then return True 
+                                                                else fail "all non-void must return"
 
 buildSig :: [TopDef] -> State Env
 buildSig []                     = ask
 buildSig (FnDef t id args _:xs) = do
-  cs <- ask  
+  cs <- ask
   if elem id (map fst cs)
     then fail $ "Duplicate defenitions of " ++ show id
     else if length args == length (nubBy (==) args)
@@ -50,7 +44,7 @@ buildSig (FnDef t id args _:xs) = do
 
 
 checkTopDef :: TopDef -> State Type
-checkTopDef (FnDef t id args (Block b)) = 
+checkTopDef (FnDef t id args (Block b)) = do
   local (\x -> map f args ++ x) (typeStmt b t)
     where f (Arg t i) = (i,t)
 
@@ -193,3 +187,20 @@ inferBoolBin :: Expr -> Expr -> State Type
 inferBoolBin e0 e1 = do
   inferBool e0
   inferBool e1
+
+
+-- check if a program returns correctly
+returnCheck :: [TopDef] -> Bool
+returnCheck fs = not $ elem False (map (\(FnDef _ _ _ (Block stms)) -> returns stms) fs')
+    where fs' = filter (\(FnDef t _ _ _) -> t /= Void) fs -- filter non-void funs
+          returns :: [Stmt] -> Bool
+          returns []                              = False
+          returns (Ret _:_)                       = True
+          returns (BStmt (Block stms):xs)         = returns stms || returns xs
+          returns (CondElse ELitTrue s1 s2 : ss)  = returns [s1] || returns ss
+          returns (CondElse ELitFalse s1 s2 : ss) = returns [s2] || returns ss
+          returns (CondElse _ s1 s2 : ss)         = (returns [s1] && returns [s2]) || returns ss
+          returns (Cond ELitTrue s1:ss)           = returns [s1] || returns ss
+          returns (Cond ELitFalse _:ss)           = returns ss
+          returns (While ELitTrue s : ss)         = returns [s] || returns ss
+          returns (_:ss)                          = returns ss
