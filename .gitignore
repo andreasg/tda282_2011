@@ -1,0 +1,13 @@
+\#*#
+*.dvi
+*.aux
+*.log
+TestJavalette
+*.o
+*.exe
+*.txt
+*.ps
+*.hi
+*.x
+*.y
+
