@@ -1,4 +1,4 @@
-module TypeChecker2 where
+module TypeChecker where
 
 
 -- BNF Converter imports
