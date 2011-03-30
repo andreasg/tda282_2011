@@ -29,7 +29,7 @@ typecheck (Program fs) = runReaderT (buildSig fs) stdEnv  >>=
                          runReaderT (mapM checkTopDef fs) >> 
                          if returnCheck fs 
                            then return True 
-                           else fail "all non-void must return"
+                           else fail "all non-void functions must return"
 
 -- build type-signatures for functions
 buildSig :: [TopDef] -> State Env
@@ -179,8 +179,8 @@ returnCheck fs = not $ elem False (map (\(FnDef _ _ _ (Block stms)) -> returns s
           returns []                              = False
           returns (Ret _:_)                       = True
           returns (BStmt (Block stms):xs)         = returns stms || returns xs
-          returns (CondElse ELitTrue s1 s2 : ss)  = returns [s1] || returns ss
-          returns (CondElse ELitFalse s1 s2 : ss) = returns [s2] || returns ss
+          returns (CondElse ELitTrue s1 _  : ss)  = returns [s1] || returns ss
+          returns (CondElse ELitFalse _ s2 : ss)  = returns [s2] || returns ss
           returns (CondElse _ s1 s2 : ss)         = (returns [s1] && returns [s2]) || returns ss
           returns (Cond ELitTrue s1:ss)           = returns [s1] || returns ss
           returns (Cond ELitFalse _:ss)           = returns ss
