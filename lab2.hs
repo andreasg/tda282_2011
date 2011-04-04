@@ -11,7 +11,7 @@ import TypeChecker
 
 -- driver
 
-check :: String -> IO () 
+check :: String -> IO ()
 check s = case pProgram (myLexer s) of
             Bad err  -> do putStrLn "SYNTAX ERROR"
                            putStrLn err
@@ -20,7 +20,7 @@ check s = case pProgram (myLexer s) of
                           Bad err -> do putStrLn "TYPE ERROR"
                                         putStrLn err
                                         exitFailure 
-                          Ok _    -> putStrLn "OK"
+                          Ok e    -> putStrLn (show e)
 
 main :: IO ()
 main = do args <- getArgs
