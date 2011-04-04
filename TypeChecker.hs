@@ -21,16 +21,17 @@ type State a = ReaderT Env Err a
 stdEnv =[[(Ident "printInt",    Fun Void [Int])
          ,(Ident "printDouble", Fun Void [Doub])
          ,(Ident "readDouble",  Fun Doub [])
-         ,(Ident "readInt",     Fun Int [])
+         ,(Ident "readInt",     Fun Int  [])
          ,(Ident "printString", Fun Void [Void])]]
 
 
-typecheck :: Program -> Err Bool
-typecheck (Program fs) = runReaderT (buildSig fs) stdEnv  >>=
-                         runReaderT (mapM checkTopDef fs) >>
-                         if returnCheck fs
-                           then return True
-                           else fail "all non-void functions must return"
+typecheck :: Program -> Err Env
+typecheck (Program fs) = do
+  e0 <- runReaderT (buildSig fs) stdEnv
+  e1 <- runReaderT (mapM checkTopDef fs) e0
+  if returnCheck fs
+   then return e1
+   else fail "all non-void functions must return"
 
 
 buildSig :: [TopDef] -> State Env
@@ -60,6 +61,7 @@ typeStmt (BStmt (Block b):s)  rt = local ((:)[]) (typeStmt b rt) >> typeStmt s r
 typeStmt (Incr id:s)          rt = inferNumId id >> typeStmt s rt
 typeStmt (Decr id:s)          rt = inferNumId id >> typeStmt s rt
 typeStmt (SExp e:s)           rt = typeExpr e    >> typeStmt s rt
+typeStmt (Decl Void _:s)      rt = fail "Cannot declare void var."
 typeStmt (Decl t is:s)        rt = do ids <- mapM (checkItem t) is
                                       local (addVars t ids) (typeStmt s rt)
 typeStmt (Cond e s':s)        rt = do inferBool e
