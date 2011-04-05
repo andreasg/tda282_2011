@@ -25,13 +25,18 @@ stdEnv =[[(Ident "printInt",    Fun Void [Int])
          ,(Ident "printString", Fun Void [Void])]]
 
 
-typecheck :: Program -> Err Env
+typecheck :: Program -> Err Bool
 typecheck (Program fs) = do
   e0 <- runReaderT (buildSig fs) stdEnv
-  e1 <- runReaderT (mapM checkTopDef fs) e0
+  runReaderT (mapM checkTopDef fs) e0
   if returnCheck fs
-   then return e1
+   then return True
    else fail "all non-void functions must return"
+
+
+
+
+
 
 
 buildSig :: [TopDef] -> State Env
@@ -45,6 +50,7 @@ buildSig (FnDef t id args _:xs) = do
          else fail "Duplicate assignments of arguments"
 
 
+-- use sequence here...
 addVars :: Type -> [Ident] -> Env -> Env
 addVars t is (e:es) = (foldr (:) e (zip is (repeat t))):es
 
@@ -53,6 +59,11 @@ checkTopDef :: TopDef -> State Type
 checkTopDef (FnDef t id args (Block b)) = local (\x -> map f args  : x) (typeStmt b t)
     where f (Arg t i) = (i,t)
 
+
+
+
+
+--typeStmt :: [Stmt] -> Type -> State Stmt
 
 typeStmt :: [Stmt] -> Type -> State Type
 typeStmt []                   rt = return Void
@@ -89,9 +100,9 @@ typeStmt (VRet:s)             rt | rt == Void = return Void
                                  | otherwise  = fail $ "Return type not " ++ show rt
 
 
-typeExpr :: Expr -> State Type
+typeExpr :: Expr -> State Expr
 typeExpr (EVar id)       = typeIdent id
-typeExpr (ELitInt _)     = return Int
+typeExpr e@(ELitInt _)   = return (TExp Int e)
 typeExpr (ELitDoub _)    = return Doub
 typeExpr ELitTrue        = return Bool
 typeExpr ELitFalse       = return Bool
