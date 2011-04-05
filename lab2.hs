@@ -20,7 +20,7 @@ check s = case pProgram (myLexer s) of
                           Bad err -> do putStrLn "TYPE ERROR"
                                         putStrLn err
                                         exitFailure 
-                          Ok e    -> putStrLn (show e)
+                          Ok e    -> putStrLn ("OK \n" ++ show e)
 
 main :: IO ()
 main = do args <- getArgs
