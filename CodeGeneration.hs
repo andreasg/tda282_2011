@@ -9,6 +9,8 @@ import Debug.Trace
 import Data.List (nubBy)
 import Control.Monad.State
 
+import TypeChecker
+
 type Jasmin = [Instruction]
 
 
