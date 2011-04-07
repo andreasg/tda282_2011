@@ -7,7 +7,7 @@ import ParJavalette
 import ErrM
 
 import TypeChecker
-
+import CodeGeneration
 
 -- driver
 
@@ -20,7 +20,9 @@ check s = case pProgram (myLexer s) of
                           Bad err -> do putStrLn "TYPE ERROR"
                                         putStrLn err
                                         exitFailure 
-                          Ok e    -> putStrLn ("OK \n" ++ show e)
+--                          Ok e    -> putStrLn $ show e
+                          Ok p    -> testGenCode p "Main"
+
 
 main :: IO ()
 main = do args <- getArgs

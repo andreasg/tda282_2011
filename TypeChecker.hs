@@ -45,9 +45,16 @@ buildSig (FnDef t id args _:xs) = do
          then local (\(x:xs) -> ((id,Fun t (map (\(Arg t i) -> t) args)):x):xs) (buildSig xs)
          else fail "Duplicate assignments of arguments"
 
+{-
+addVars :: Type -> [Item] -> Env -> Env
+addVars t (NoInit id:is) (e:es) = (foldr (:) e (zip is (repeat t))):es
+addVars t (Init id _) (e:es) = (foldr (:) e (zip is (repeat t))):es
+-}
 
-addVars :: Type -> [Ident] -> Env -> Env
-addVars t is (e:es) = (foldr (:) e (zip is (repeat t))):es
+addVars :: Type -> [Item] -> Env -> Env
+addVars t is (e:es) = (foldr (:) e (zip (map f is) (repeat t))):es
+    where f (NoInit id) = id
+          f (Init id _) = id
 
 
 checkTopDef :: TopDef -> State TopDef
@@ -64,9 +71,9 @@ typeStmt (Incr id:s)          rt = inferNumId id >> (typeStmt s rt >>= (\ss -> r
 typeStmt (Decr id:s)          rt = inferNumId id >> (typeStmt s rt >>= (\ss -> return $ Decr id:ss))
 typeStmt (SExp e:s)           rt = typeExpr e >>= (\e' -> typeStmt s rt >>= (\ss -> return $ SExp e':ss))
 typeStmt (Decl Void _:s)      rt = fail "Cannot declare var with type Void."
-typeStmt (Decl t is:s)        rt = do ids <- mapM (checkItem t) is
-                                      ss  <- local (addVars t ids) (typeStmt s rt)
-                                      return $ Decl t is : ss
+typeStmt (Decl t is:s)        rt = do is' <- mapM (checkItem t) is
+                                      ss  <- local (addVars t is') (typeStmt s rt)
+                                      return $ Decl t is' : ss
 typeStmt (Cond e s':s)        rt = do e'     <- inferBool e
                                       s'':[] <- local id (typeStmt [s'] rt)
                                       ss <- typeStmt s rt
@@ -167,18 +174,18 @@ inferBoolBin e0 e1 = do e0' <- inferBool e0
                         return (e0',e1')
 
 
-checkItem :: Type -> Item -> State Ident
-checkItem _ (NoInit id) = do
+checkItem :: Type -> Item -> State Item
+checkItem t (NoInit id) = do
   (c:cs) <- ask
   case lookup id c of
-    Nothing -> return id
+    Nothing -> return (NoInit id)
     _       -> fail $ "Variable " ++ show id ++ " already exists in scope"
 checkItem t (Init id e) = do
   (c:cs) <- ask
   (TExp t' e')  <- typeExpr e
   case lookup id c of
     Nothing -> if t == t'
-               then return id
+               then return (Init id (TExp t' e'))
                else fail $ "Expression " ++ show e ++ " has the wrong type"
     _       -> fail $ "Variable " ++ show id ++ " already exists"
 

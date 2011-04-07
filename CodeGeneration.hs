@@ -1,12 +1,13 @@
-module CodeGeneration where
+module CodeGeneration (testGenCode) where
 
 import AbsJavalette
 import PrintJavalette
 import ErrM
 import Debug.Trace
 import Data.List (nubBy)
+import Data.Maybe (fromJust)
 import Control.Monad.State
-import TypeChecker
+--import TypeChecker
 
 --------------------------------------------------------------------------------
 -- Types and Data
@@ -15,21 +16,38 @@ type Result a = StateT Scope Err a
 data Scope = Scope { stackDepth    :: Int
                    , maxStackDepth :: Int
                    , vars          :: [(Ident, Int)]
+                   , nextVar       :: Int
                    , label_count   :: Int
-                   , label         :: Int 
                    , code          :: [String]
                    , className     :: String }
            deriving Show
 
 
+
+
+testGenCode :: Program -> String -> IO ()
+testGenCode (Program topDefs) name = 
+    case runStateT (mapM topDefCode topDefs) (newScope name) of
+      Ok (_,scope) -> putStrLn (unlines (code scope))
+      _            -> putStrLn "code gen fail"
+
+
+
+
+              
+                 
+
+
 -- |Create a new scope
-newScope :: Int -> String -> Scope
-newScope lbl name = Scope 0 0 [] 0 lbl [] name
+newScope ::  String -> Scope
+newScope name = Scope 0 0 [] 0 0 [] name
 
 
 -- instructions
 iload  n = "iload_" ++ (show n)
+istore n = "istore_" ++ (show n)
 dload  n = "dload_" ++ (show n)
+dstore  n = "dstore_" ++ (show n)
 bipush n = "bipush " ++ (show n)
 ldc_w  n = "ldc_w "  ++ (show n)
 
@@ -42,7 +60,7 @@ lookupId id = do s <- get
                    Nothing -> fail "lookupId :: Ident not found in scope"
   
 
--- |Add code to the outmost scope
+-- |Add code to the scope
 putCode :: [String] -> Result ()
 putCode ss = modify (\s -> s {code = (code s ++ ss)})
 
@@ -54,16 +72,71 @@ incStack n = modify (\s ->
                            , stackDepth    = (stackDepth s) + n } )
 
 typeToChar :: Type -> Char
-typeToChar t = case t of
-                 Int  -> 'I'
-                 Doub -> 'D'
-                 Void -> 'V'
-exprToChar :: Expr -> Char
+typeToChar t = fromJust $ lookup t [(Int,'I'),(Doub,'D'),(Void,'V')]
 exprToChar (TExp t _) = typeToChar t
 
 
+addVar :: Type -> Ident -> Result ()
+addVar t id = case t of 
+                Int -> modify (\s -> s { vars = ((id,nextVar s - 1):vars s)
+                                       , nextVar = nextVar s + 1})
+                Doub -> modify (\s -> s { vars = ((id,nextVar s - 2):vars s)
+                                        , nextVar = nextVar s + 2})
+
+-- generate code for a function
+topDefCode :: TopDef -> Result ()
+topDefCode (FnDef t (Ident id) args (Block ss)) = 
+  do
+    putCode [".method public static " ++ id ++ 
+             "(" ++ map typeToChar (map (\(Arg t id) -> t) args) ++ ")" ++
+             [typeToChar t]]
+    putCode [".limit stack 100"]
+    putCode [".limit locals 100"]     
+
+    mapM_ (\(Arg t id) -> do addVar t id) args
+
+    mapM_ stmtCode ss
+    putCode [".end method\n"]
+    
+
+-- generate code for a statement
+stmtCode :: Stmt -> Result ()
+stmtCode stmt = 
+ case stmt of
+  Empty               -> putCode ["nop"]
+  (BStmt (Block ss))  -> mapM_ stmtCode ss -- add all parameter vars to the var-list
+  Decl t is           -> case is of 
+                           [] -> return ()
+                           (NoInit id:is') -> addVar t id >> stmtCode (Decl t is')
+                           (Init id expr:is') -> 
+                               do addVar t id
+                                  exprCode expr
+                                  case t of
+                                    Int -> do i <- lookupId id
+                                              putCode[istore i]
+                                              stmtCode (Decl t is')
+                                    Doub -> do i <- lookupId id
+                                               putCode[dstore i]
+                                               stmtCode (Decl t is')
+  Ass id e@(TExp t _)-> lookupId id >>= (\i -> case t of
+                                                Int -> exprCode e >> putCode [istore i]
+                                                Doub -> exprCode e >> putCode [dstore i])
+  Incr id             -> undefined
+  Decr id             -> undefined
+  Ret e@(TExp t _)     -> do exprCode e 
+                             case t of 
+                              Int  -> putCode["ireturn"]
+                              Doub -> putCode["dreturn"]
+  VRet                -> putCode ["return"]
+  Cond expr stmt      -> undefined
+  CondElse expr s0 s1 -> undefined
+  While expr stmt     -> undefined
+  SExp e              -> exprCode e -- right??
+
 -- |Generate code for an expression
 exprCode :: Expr -> Result ()
+exprCode (ELitInt i) = putCode [bipush i]
+exprCode (ELitDoub d) = putCode [ldc_w d]
 exprCode (TExp t e) = 
  case e of
   EVar id      -> do i <- lookupId id -- bug here?
@@ -97,20 +170,24 @@ exprCode (TExp t e) =
   EOr  e0 e1   -> fail "exprCode:: EOr Expr Expr: not implemented yet"
 
 
+
 --------------------------------------------------------------------------------
 -- Test Functions
 --------------------------------------------------------------------------------
 testExpr :: [Expr] -> IO ()
-testExpr es = case runStateT (mapM_ exprCode es) (newScope 0 "ClassName") of
+testExpr es = case runStateT (mapM_ exprCode es) (newScope "ClassName") of
                   Ok c -> putStrLn $ (unlines (code (snd c)) ++ "maxStackDepth = " ++ 
                                       (show ( maxStackDepth (snd c))))
                   _    -> putStrLn "testExpr fail"
 
 
-
 -- Test xpression
 eAddTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))]
 
-eAppTest = [TExp Int (EApp (Ident "f") [TExp Int (ELitInt 10)
+
+-- 10 + 20;
+-- f(10, 2.0)
+eAppTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))
+           ,TExp Int (EApp (Ident "f") [TExp Int (ELitInt 10)
                                        ,TExp Doub (ELitDoub 2.0)
                                        ])]
