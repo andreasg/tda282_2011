@@ -1,4 +1,4 @@
-module CodeGeneration (testGenCode) where
+module CodeGeneration (genCode) where
 
 import AbsJavalette
 import PrintJavalette
@@ -7,7 +7,6 @@ import Debug.Trace
 import Data.List (nubBy)
 import Data.Maybe (fromJust)
 import Control.Monad.State
---import TypeChecker
 
 --------------------------------------------------------------------------------
 -- Types and Data
@@ -21,21 +20,6 @@ data Scope = Scope { stackDepth    :: Int
                    , code          :: [String]
                    , className     :: String }
            deriving Show
-
-
-
-
-testGenCode :: Program -> String -> IO ()
-testGenCode (Program topDefs) name = 
-    case runStateT (mapM topDefCode topDefs) (newScope name) of
-      Ok (_,scope) -> putStrLn (unlines (code scope))
-      _            -> putStrLn "code gen fail"
-
-
-
-
-              
-                 
 
 
 -- |Create a new scope
@@ -68,35 +52,72 @@ putCode ss = modify (\s -> s {code = (code s ++ ss)})
 -- |Modify the stack-depth for the current scope
 incStack :: Int -> Result ()
 incStack n = modify (\s -> 
-                         s { maxStackDepth = max (maxStackDepth s) (maxStackDepth s + n)
+                         s { maxStackDepth = max (maxStackDepth s) (stackDepth s + n)
                            , stackDepth    = (stackDepth s) + n } )
 
 typeToChar :: Type -> Char
 typeToChar t = fromJust $ lookup t [(Int,'I'),(Doub,'D'),(Void,'V')]
+
 exprToChar (TExp t _) = typeToChar t
+exprToChar (ELitInt i) = 'I'
+exprToChar (ELitDoub d) = 'D'
+exprToChar (EString s) = 'S'
+exprToChar e   = trace (show e) 'a'
+
 
 
 addVar :: Type -> Ident -> Result ()
 addVar t id = case t of 
-                Int -> modify (\s -> s { vars = ((id,nextVar s - 1):vars s)
+                Int -> modify (\s -> s { vars = ((id,nextVar s):vars s)
                                        , nextVar = nextVar s + 1})
-                Doub -> modify (\s -> s { vars = ((id,nextVar s - 2):vars s)
+                Doub -> modify (\s -> s { vars = ((id,nextVar s):vars s)
                                         , nextVar = nextVar s + 2})
 
+
+addHeader :: (Scope,TopDef) -> Scope
+addHeader (s,FnDef t (Ident id) args _) = s { code = [".method public static " ++ id' ++
+                                                       "(" ++ map typeToChar (map (\(Arg t id) -> t) args) ++ ")" ++
+                                                       [typeToChar t]
+                                                     , ".limit stack "  ++ show (maxStackDepth s)
+                                                     , ".limit locals " ++ show (nextVar s)
+                                                     ] ++ code s
+                                            }
+                                            where id' = if id == "main" then javaletteMain else id
+
+genCode :: Program -> String -> String
+genCode (Program ts) name = unlines $ classHeader name ++ main name ++ map f (map addHeader (map (runTopDef name) ts))
+        where f s = unlines (code s)
+
+
+javaletteMain :: String
+javaletteMain = "javaletteMain"
+
+classHeader :: String -> [String]
+classHeader n = [".class public " ++ n,".super java/lang/Object"]
+
+main :: String ->[String]
+main n = [".method public static main([Ljava/lang/String;)V"
+         ,".limit stack 1"
+         ,".limit locals 1"
+         ,"invokestatic " ++ n ++ "/" ++ javaletteMain ++ "()I"
+         ,"pop"
+         ,"return"
+         ,".end method\n"
+         ]        
+
+runTopDef :: String -> TopDef -> (Scope,TopDef)
+runTopDef name t = case runStateT (topDefCode t) (newScope name) of
+                   Ok (s,_) ->  (s,t)
+
+
 -- generate code for a function
-topDefCode :: TopDef -> Result ()
+topDefCode :: TopDef -> Result Scope
 topDefCode (FnDef t (Ident id) args (Block ss)) = 
-  do
-    putCode [".method public static " ++ id ++ 
-             "(" ++ map typeToChar (map (\(Arg t id) -> t) args) ++ ")" ++
-             [typeToChar t]]
-    putCode [".limit stack 100"]
-    putCode [".limit locals 100"]     
+  do mapM_ (\(Arg t id) -> do addVar t id) args
+     mapM_ stmtCode ss
+     putCode [".end method\n"]
+     get
 
-    mapM_ (\(Arg t id) -> do addVar t id) args
-
-    mapM_ stmtCode ss
-    putCode [".end method\n"]
     
 
 -- generate code for a statement
@@ -109,18 +130,20 @@ stmtCode stmt =
                            [] -> return ()
                            (NoInit id:is') -> addVar t id >> stmtCode (Decl t is')
                            (Init id expr:is') -> 
-                               do addVar t id
-                                  exprCode expr
+                               do exprCode expr
+                                  addVar t id
                                   case t of
                                     Int -> do i <- lookupId id
                                               putCode[istore i]
+                                              incStack (-1)
                                               stmtCode (Decl t is')
                                     Doub -> do i <- lookupId id
                                                putCode[dstore i]
+                                               incStack (-2)
                                                stmtCode (Decl t is')
   Ass id e@(TExp t _)-> lookupId id >>= (\i -> case t of
-                                                Int -> exprCode e >> putCode [istore i]
-                                                Doub -> exprCode e >> putCode [dstore i])
+                                                Int  -> exprCode e >> putCode [istore i] >> incStack (-1)
+                                                Doub -> exprCode e >> putCode [dstore i] >> incStack (-2))
   Incr id             -> undefined
   Decr id             -> undefined
   Ret e@(TExp t _)     -> do exprCode e 
@@ -135,18 +158,28 @@ stmtCode stmt =
 
 -- |Generate code for an expression
 exprCode :: Expr -> Result ()
-exprCode (ELitInt i) = putCode [bipush i]
-exprCode (ELitDoub d) = putCode [ldc_w d]
 exprCode (TExp t e) = 
  case e of
   EVar id      -> do i <- lookupId id -- bug here?
                      case t of
                        Int  -> putCode [iload i] >> incStack 1
-                       Doub -> putCode [dload i]
+                       Doub -> putCode [dload i] >> incStack 2
   ELitInt i    -> putCode [bipush i] >> incStack 1
   ELitDoub d   -> putCode [ldc_w d]  >> incStack 1
   ELitTrue     -> putCode [bipush 1] >> incStack 1
   ELitFalse    -> putCode [bipush 0] >> incStack 1
+  EApp (Ident "printString") [TExp _ (EString s)] -> 
+   do putCode ["getstatic java/lang/System/out Ljava/io/PrintStream;"]
+      putCode ["ldc " ++ (show s)]
+      putCode ["invokevirtual java/io/PrintStream/println(Ljava/lang/String;)V"]
+  EApp (Ident "printInt") es ->
+   do putCode ["getstatic java/lang/System/out Ljava/io/PrintStream;"]
+      mapM_ exprCode es
+      putCode ["invokevirtual java/io/PrintStream/println(I)V"]
+  EApp (Ident "printDouble") es ->
+   do putCode ["getstatic java/lang/System/out Ljava/io/PrintStream;"]
+      mapM_ exprCode es
+      putCode ["invokevirtual java/io/PrintStream/println(D)V"]
   EApp (Ident id) es   -> 
       do mapM_ exprCode es
          s <- get
@@ -154,7 +187,7 @@ exprCode (TExp t e) =
                  "(" ++ map exprToChar es ++ ")" ++ [typeToChar t]] >> if t == Void
                                                                         then incStack 0
                                                                         else incStack 1
-  EString s    -> putCode ["ldc_w "++s]  >> incStack 1
+  EString s    -> putCode ["ldc_w "++(show s)]  >> incStack 1
   Neg exp      -> fail "exprCode:: Neg Expr: not implemented yet"
   Not exp      -> fail "exprCode:: Not Expr: not implemented yet"
   EMul e0 o e1 -> exprCode e0 >> exprCode e1 >>
@@ -170,24 +203,23 @@ exprCode (TExp t e) =
   EOr  e0 e1   -> fail "exprCode:: EOr Expr Expr: not implemented yet"
 
 
-
 --------------------------------------------------------------------------------
 -- Test Functions
 --------------------------------------------------------------------------------
-testExpr :: [Expr] -> IO ()
-testExpr es = case runStateT (mapM_ exprCode es) (newScope "ClassName") of
-                  Ok c -> putStrLn $ (unlines (code (snd c)) ++ "maxStackDepth = " ++ 
-                                      (show ( maxStackDepth (snd c))))
-                  _    -> putStrLn "testExpr fail"
-
-
--- Test xpression
-eAddTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))]
-
-
--- 10 + 20;
--- f(10, 2.0)
-eAppTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))
-           ,TExp Int (EApp (Ident "f") [TExp Int (ELitInt 10)
-                                       ,TExp Doub (ELitDoub 2.0)
-                                       ])]
+--testExpr :: [Expr] -> IO ()
+--testExpr es = case runStateT (mapM_ exprCode es) (newScope "ClassName") of
+--                  Ok c -> putStrLn $ (unlines (code (snd c)) ++ "maxStackDepth = " ++ 
+--                                      (show ( maxStackDepth (snd c))))
+--                  _    -> putStrLn "testExpr fail"
+--
+--
+---- Test xpression
+--eAddTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))]
+--
+--
+---- 10 + 20;
+---- f(10, 2.0)
+--eAppTest = [TExp Int (EAdd (TExp Int (ELitInt 10)) Plus (TExp Int (ELitInt 20)))
+--           ,TExp Int (EApp (Ident "f") [TExp Int (ELitInt 10)
+--                                       ,TExp Doub (ELitDoub 2.0)
+--                                       ])]

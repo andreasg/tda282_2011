@@ -114,10 +114,10 @@ typeExpr e@(ERel e0 op e1) = do e0'@(TExp t0 _) <- typeExpr e0
                                  then return (TExp Bool (ERel e0' op e1'))
                                  else fail "incompatable types in relop"
 typeExpr e@(EApp id args)  = do argTs <- mapM typeExpr args
-                                t' <- typeIdent id
+                                t'    <- typeIdent id
                                 case t' of
                                   Fun t ts   -> if ts == [t | (TExp t _) <- argTs]
-                                                 then return (TExp t e)
+                                                 then return (TExp t (EApp id argTs))
                                                  else fail $ show id ++ " gets wrong arguments"
                                   _          -> fail $ show id ++ " does not exist"
 
