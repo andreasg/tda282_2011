@@ -53,8 +53,10 @@ addVars t is (e:es) = (foldr (:) e (zip (map f is) (repeat t))):es
 
 
 checkTopDef :: TopDef -> State TopDef
+--checkTopDef (FnDef Void id args (Block [])) = return (FnDef Void id args (Block [VRet]))
 checkTopDef (FnDef t id args (Block b)) = 
-  local (\x -> map (\(Arg t i) -> (i,t)) args : x) (typeStmt b t) >>= (\ss -> return $ FnDef t id args (Block ss))
+  local (\x -> map (\(Arg t i) -> (i,t)) args : x) (typeStmt b t) >>= (\ss -> return $ FnDef t id args 
+                                                                           (Block (if t == Void then ss++[VRet] else ss)))
 
 
 typeStmt :: [Stmt] -> Type -> State [Stmt]
@@ -150,9 +152,9 @@ inferNumBin e0 e1 = do
 inferNumId :: Ident -> State Type
 inferNumId id = do
   t <- typeIdent id
-  if elem t [Int,Doub]
+  if elem t [Int]
     then return t
-    else fail $ "Ident " ++ show id ++ " is not a numeral"
+    else fail $ "Ident " ++ show id ++ " is not a integer"
 
 
 inferBool :: Expr -> State Expr
