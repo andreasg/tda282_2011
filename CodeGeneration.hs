@@ -168,14 +168,32 @@ stmtCode stmt =
                             if_icmpeq l
                             stmtCode stmt
                             putLabel l
-  CondElse expr s0 s1 -> undefined
+  CondElse expr s0 s1 -> do l1 <- getLabel
+                            l2 <- getLabel
+                            
+                            
+                            bipush   0
+                            exprCode expr
+                            if_icmpeq l1
+                            
+                            stmtCode s0 -- true
+                            goto l2
+
+                            putLabel l1
+                            stmtCode s1 -- false
+                                     
+                            putLabel l2
+         
+
+                             
+
   While expr stmt     -> do
              l1 <- getLabel
              l2 <- getLabel
 
              putLabel l1
 
-             bipush 0 -- push False
+             bipush 0      -- push False
              exprCode expr -- this shuld be exither true or false
              if_icmpeq l2
                   
@@ -228,10 +246,17 @@ exprCode (TExp t e) =
                                       Div   -> idiv
                                       Mod   -> imod
                                       Times -> imul
-                            Doub -> dmul
+                            Doub -> case o of 
+                                      Div   -> ddiv
+                                      Mod   -> dmod
+                                      Times -> dmul
   EAdd e0 o e1 -> exprCode e0 >> exprCode e1 >>
-                  case t of Int  -> iadd
-                            Doub -> dadd
+                  case t of Int  -> case o of
+                                      Plus  -> iadd
+                                      Minus -> isub
+                            Doub -> case o of
+                                      Plus  -> dadd
+                                      Minus -> dsub
   ERel e0 o e1 -> do exprCode e0
                      exprCode e1
                      l1 <- getLabel
@@ -267,8 +292,12 @@ imul        = putCode ["\timul"] >> incStack (-1)
 idiv        = putCode ["\tidiv"] >> incStack (-1)
 imod        = putCode ["\timod"] >> incStack (-1)
 dmul        = putCode ["\tdmul"] >> incStack (-2)
+dmod        = putCode ["\tdmod"] >> incStack (-2)
+ddiv        = putCode ["\tddiv"] >> incStack (-2)
 iadd        = putCode ["\tiadd"] >> incStack (-1)
+isub        = putCode ["\tisub"] >> incStack (-1)
 dadd        = putCode ["\tdadd"] >> incStack (-2)
+dsub        = putCode ["\tdsub"] >> incStack (-2)
 ipop        = putCode ["\tpop"]  >> incStack (-1)
 dpop        = putCode ["\tpop2"] >> incStack (-2)
 iret        = putCode ["\tireturn"]
