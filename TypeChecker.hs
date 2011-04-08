@@ -45,11 +45,6 @@ buildSig (FnDef t id args _:xs) = do
          then local (\(x:xs) -> ((id,Fun t (map (\(Arg t i) -> t) args)):x):xs) (buildSig xs)
          else fail "Duplicate assignments of arguments"
 
-{-
-addVars :: Type -> [Item] -> Env -> Env
-addVars t (NoInit id:is) (e:es) = (foldr (:) e (zip is (repeat t))):es
-addVars t (Init id _) (e:es) = (foldr (:) e (zip is (repeat t))):es
--}
 
 addVars :: Type -> [Item] -> Env -> Env
 addVars t is (e:es) = (foldr (:) e (zip (map f is) (repeat t))):es
@@ -64,12 +59,12 @@ checkTopDef (FnDef t id args (Block b)) =
 
 typeStmt :: [Stmt] -> Type -> State [Stmt]
 typeStmt []                   rt = return []
-typeStmt (Empty:s)            rt = typeStmt s rt >>= (\ss -> return $ Empty:ss)
+typeStmt (Empty:s)            rt = typeStmt s rt >>= return . (:) Empty
 typeStmt (BStmt (Block b):s)  rt = local ((:)[]) (typeStmt b rt) >>= (\ss -> typeStmt s rt >>= 
-                                                                     (\ss' -> return $ (BStmt (Block ss)) :ss'))
-typeStmt (Incr id:s)          rt = inferNumId id >> (typeStmt s rt >>= (\ss -> return $ Incr id:ss))
-typeStmt (Decr id:s)          rt = inferNumId id >> (typeStmt s rt >>= (\ss -> return $ Decr id:ss))
-typeStmt (SExp e:s)           rt = typeExpr e >>= (\e' -> typeStmt s rt >>= (\ss -> return $ SExp e':ss))
+                                                                             return . (:) (BStmt (Block ss)))
+typeStmt (Incr id:s)          rt = inferNumId id >> (typeStmt s rt >>= return . (:) (Incr id))
+typeStmt (Decr id:s)          rt = inferNumId id >> (typeStmt s rt >>= return . (:) (Decr id))
+typeStmt (SExp e:s)           rt = typeExpr e >>= (\e' -> typeStmt s rt >>= return . (:) (SExp e'))
 typeStmt (Decl Void _:s)      rt = fail "Cannot declare var with type Void."
 typeStmt (Decl t is:s)        rt = do is' <- mapM (checkItem t) is
                                       ss  <- local (addVars t is') (typeStmt s rt)
@@ -79,27 +74,27 @@ typeStmt (Cond e s':s)        rt = do e'     <- inferBool e
                                       ss <- typeStmt s rt
                                       return $ Cond e' s'' : ss
 typeStmt (CondElse e s0 s1:s) rt = do e' <- inferBool e
-                                      s0':[] <- local id (typeStmt [s0] rt)
-                                      s1':[] <- local id (typeStmt [s1] rt)
-                                      ss <- typeStmt s rt
-                                      return $ CondElse e' s0' s1' : ss
+                                      [s0'] <- local id (typeStmt [s0] rt)
+                                      [s1'] <- local id (typeStmt [s1] rt)
+                                      typeStmt s rt >>= return . (:) (CondElse e' s0' s1')
 typeStmt (While e s':s)       rt = do e' <- inferBool e
-                                      s'':[] <- local id (typeStmt [s'] rt)
-                                      typeStmt s rt >>= (\ss -> return $ While e' s'' : ss)
+                                      [s''] <- local id (typeStmt [s'] rt)
+                                      typeStmt s rt >>= return . (:) (While e' s'')
 typeStmt (Ass id e:s)         rt = do (TExp t e') <- typeExpr e
                                       t' <- typeIdent id
                                       if t == t'
-                                        then typeStmt s rt >>= (\ss -> return $ Ass id (TExp t e') : ss)
+                                        then typeStmt s rt >>= return . (:) (Ass id (TExp t e'))
                                         else fail $ "Expression " ++ show e ++ " has the wrong type"
 typeStmt (Ret e:s)            rt = do local id (typeStmt s rt)
                                       (TExp t e') <- typeExpr e
                                       if t == rt
-                                        then typeStmt s rt >>= (\ss -> return $ Ret (TExp t e') : ss)
+                                        then typeStmt s rt >>= return . (:) (Ret (TExp t e'))
                                         else fail $ show t ++ " is not of return type " ++ show rt
-typeStmt (VRet:s)             rt | rt == Void = typeStmt s rt >>= (\ss -> return $ VRet : ss)
+typeStmt (VRet:s)             rt | rt == Void = typeStmt s rt >>= return . (:) VRet
                                  | otherwise  = fail $ "Return type not " ++ show rt
 
 
+-- Takes an expression and returns a type-annotated expression
 typeExpr :: Expr -> State Expr
 typeExpr (EVar id)         = typeIdent id >>= (\t -> return $ TExp t (EVar id))
 typeExpr e@(ELitInt _)     = return $ TExp Int  e
@@ -109,8 +104,8 @@ typeExpr ELitFalse         = return $ TExp Bool ELitFalse
 typeExpr e@(EString _)     = return $ TExp Void e
 typeExpr (Neg e)           = inferNum e  >>= (\(TExp t e') -> return $ TExp t (Neg (TExp t e')))
 typeExpr (Not e)           = inferBool e >>= (\(TExp t e') -> return $ TExp t (Not (TExp t e')))
-typeExpr e@(EMul e0 op e1)  = inferNumBin e0 e1  >>= (\(e'@(TExp t _),e'') -> return $ TExp t (EMul e' op e''))
-typeExpr e@(EAdd e0 op e1)  = inferNumBin e0 e1  >>= (\(e'@(TExp t _),e'') -> return $ TExp t (EAdd e' op e''))
+typeExpr e@(EMul e0 op e1) = inferNumBin e0 e1  >>= (\(e'@(TExp t _),e'') -> return $ TExp t (EMul e' op e''))
+typeExpr e@(EAdd e0 op e1) = inferNumBin e0 e1  >>= (\(e'@(TExp t _),e'') -> return $ TExp t (EAdd e' op e''))
 typeExpr e@(EAnd e0 e1)    = inferBoolBin e0 e1 >>= (\(e,e') -> return $ TExp Bool (EAnd e e'))
 typeExpr e@(EOr e0 e1)     = inferBoolBin e0 e1 >>= (\(e,e') -> return $ TExp Bool (EOr  e e'))
 typeExpr e@(ERel e0 op e1) = do e0'@(TExp t0 _) <- typeExpr e0
@@ -169,9 +164,10 @@ inferBool e = do
 
 
 inferBoolBin :: Expr -> Expr -> State (Expr, Expr)
-inferBoolBin e0 e1 = do e0' <- inferBool e0
-                        e1' <- inferBool e1
-                        return (e0',e1')
+inferBoolBin e0 e1 = do 
+  e0' <- inferBool e0
+  e1' <- inferBool e1
+  return (e0',e1')
 
 
 checkItem :: Type -> Item -> State Item
@@ -193,7 +189,7 @@ checkItem t (Init id e) = do
 -- check if a program returns correctly
 returnCheck :: [TopDef] -> Bool
 returnCheck fs = not $ elem False (map (\(FnDef _ _ _ (Block stms)) -> returns stms) fs')
-    where fs' = filter (\(FnDef t _ _ _) -> t /= Void) fs -- filter non-void funs
+    where fs' = filter (\(FnDef t _ _ _) -> t /= Void) fs -- get the non-void funs
           returns :: [Stmt] -> Bool
           returns []                              = False
           returns (Ret _:_)                       = True
