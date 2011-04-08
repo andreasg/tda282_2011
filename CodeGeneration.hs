@@ -72,9 +72,9 @@ main :: String ->[String]
 main n = [".method public static main([Ljava/lang/String;)V"
          ,".limit stack 1"
          ,".limit locals 1"
-         ,"invokestatic " ++ n ++ "/" ++ javaletteMain ++ "()I"
-         ,"pop"
-         ,"return"
+         ,"\tinvokestatic " ++ n ++ "/" ++ javaletteMain ++ "()I"
+         ,"\tpop"
+         ,"\treturn"
          ,".end method\n"
          ]
 
@@ -162,14 +162,38 @@ stmtCode stmt =
                               Int  -> iret
                               Doub -> dret
   VRet                -> ret
-  Cond expr stmt      -> undefined
+  Cond expr stmt      -> do l <- getLabel
+                            bipush 0
+                            exprCode expr
+                            if_icmpeq l
+                            stmtCode stmt
+                            putLabel l
   CondElse expr s0 s1 -> undefined
-  While expr stmt     -> undefined
+  While expr stmt     -> do
+             l1 <- getLabel
+             l2 <- getLabel
+
+             putLabel l1
+
+             bipush 0 -- push False
+             exprCode expr -- this shuld be exither true or false
+             if_icmpeq l2
+                  
+             stmtCode stmt
+
+             goto l1 -- loop
+             putLabel l2 -- end loop
+             
   SExp e@(TExp t e')  -> exprCode e >> case t of -- not sure if this is correct
                                         Int  -> ipop
                                         Doub -> dpop
                                         Bool -> ipop
                                         Void -> return ()
+getLabel :: Result String
+getLabel = do s <- get
+              let l = "L" ++ show (label_count s)
+              modify (\s -> s {label_count = label_count s + 1})
+              return l
 --------------------------------------------------------------------------------
 
 
@@ -200,18 +224,30 @@ exprCode (TExp t e) =
   Neg exp      -> undefined
   Not exp      -> undefined
   EMul e0 o e1 -> exprCode e0 >> exprCode e1 >>
-                  case t of Int  -> imul
+                  case t of Int  -> case o of 
+                                      Div   -> idiv
+                                      Mod   -> imod
+                                      Times -> imul
                             Doub -> dmul
   EAdd e0 o e1 -> exprCode e0 >> exprCode e1 >>
                   case t of Int  -> iadd
                             Doub -> dadd
-  ERel e0 o e1 -> case o of
-                   LTH -> undefined --     iflt  <label>
-                   LE  -> undefined --     ifle  <label>
-                   GTH -> undefined --     ifgt  <label>
-                   GE  -> undefined --     ifge  <label>
-                   EQU -> undefined --     ifeq  <label>
-                   NE  -> undefined --     ifne  <label>
+  ERel e0 o e1 -> do exprCode e0
+                     exprCode e1
+                     l1 <- getLabel
+                     l2 <- getLabel
+                     case o of
+                       LTH -> if_icmplt l1
+                       LE  -> if_icmple l1
+                       GTH -> if_icmpgt l1
+                       GE  -> if_icmpge l1
+                       EQU -> if_icmpeq l1
+                       NE  -> if_icmpne l1
+                     bipush 0
+                     goto l2
+                     putLabel l1
+                     bipush 1
+                     putLabel l2
   EAnd e0 e1   -> exprCode e0 >> exprCode e1 >> iand >> incStack (-1)
   EOr  e0 e1   -> exprCode e0 >> exprCode e1 >> ior  >> incStack (-1)
 --------------------------------------------------------------------------------
@@ -220,40 +256,50 @@ exprCode (TExp t e) =
 --------------------------------------------------------------------------------
 -- Jasmin Instructions
 --------------------------------------------------------------------------------
-iload  n    = putCode ["iload "  ++ (show n)] >> incStack 1
-istore n    = putCode ["istore " ++ (show n)] >> incStack (-1)
-dload  n    = putCode ["dload "  ++ (show n)] >> incStack 2
-dstore n    = putCode ["dstore " ++ (show n)] >> incStack (-2)
-bipush n    = putCode ["bipush " ++ (show n)] >> incStack 1
-dpush  n    = putCode ["ldc2_w " ++ (show n)] >> incStack 2
-spush  s    = putCode ["ldc "    ++ (show s)] >> incStack 1
-imul        = putCode ["imul"] >> incStack (-1)
-dmul        = putCode ["dmul"] >> incStack (-2)
-iadd        = putCode ["iadd"] >> incStack (-1)
-dadd        = putCode ["dadd"] >> incStack (-2)
-ipop        = putCode ["pop"]  >> incStack (-1)
-dpop        = putCode ["pop2"] >> incStack (-2)
-iret        = putCode ["ireturn"]
-dret        = putCode ["dreturn"]
-ret         = putCode ["return"]
-iinc n      = putCode ["iinc " ++ show n ++ " 1"]
-idec n      = putCode ["iinc " ++ show n ++ " -1"]
-iand        = putCode ["and"]
-ior         = putCode ["or"]
-printStream = putCode ["getstatic java/lang/System/out Ljava/io/PrintStream;"] >>
+iload  n    = putCode ["\tiload "  ++ (show n)] >> incStack 1
+istore n    = putCode ["\tistore " ++ (show n)] >> incStack (-1)
+dload  n    = putCode ["\tdload "  ++ (show n)] >> incStack 2
+dstore n    = putCode ["\tdstore " ++ (show n)] >> incStack (-2)
+bipush n    = putCode ["\tbipush " ++ (show n)] >> incStack 1
+dpush  n    = putCode ["\tldc2_w " ++ (show n)] >> incStack 2
+spush  s    = putCode ["\tldc "    ++ (show s)] >> incStack 1
+imul        = putCode ["\timul"] >> incStack (-1)
+idiv        = putCode ["\tidiv"] >> incStack (-1)
+imod        = putCode ["\timod"] >> incStack (-1)
+dmul        = putCode ["\tdmul"] >> incStack (-2)
+iadd        = putCode ["\tiadd"] >> incStack (-1)
+dadd        = putCode ["\tdadd"] >> incStack (-2)
+ipop        = putCode ["\tpop"]  >> incStack (-1)
+dpop        = putCode ["\tpop2"] >> incStack (-2)
+iret        = putCode ["\tireturn"]
+dret        = putCode ["\tdreturn"]
+ret         = putCode ["\treturn"]
+iinc n      = putCode ["\tiinc " ++ show n ++ " 1"]
+idec n      = putCode ["\tiinc " ++ show n ++ " -1"]
+iand        = putCode ["\tand"]
+ior         = putCode ["\tor"]
+goto      l = putCode ["\tgoto " ++ l]
+if_icmplt l = putCode ["\tif_icmplt " ++ l] >> incStack (-2)
+if_icmple l = putCode ["\tif_icmple " ++ l] >> incStack (-2)
+if_icmpgt l = putCode ["\tif_icmpgt " ++ l] >> incStack (-2)
+if_icmpge l = putCode ["\tif_icmpge " ++ l] >> incStack (-2)
+if_icmpeq l = putCode ["\tif_icmpeq " ++ l] >> incStack (-2)
+if_icmpne l = putCode ["\tif_icmpne " ++ l] >> incStack (-2)
+printStream = putCode ["\tgetstatic java/lang/System/out Ljava/io/PrintStream;"] >>
               incStack 1
-println c   = putCode ["invokevirtual java/io/PrintStream/println("++s++")V"]  >> 
+println c   = putCode ["\tinvokevirtual java/io/PrintStream/println("++s++")V"]  >> 
               incStack (-1)
                    where s = case c of 'S' -> "Ljava/lang/String;"
                                        'I' -> "I"
                                        'D' -> "D"
 invokestatic t id es = 
     do s <- get
-       putCode ["invokestatic " ++ className s ++ "/" ++ id ++
+       putCode ["\tinvokestatic " ++ className s ++ "/" ++ id ++
                 "(" ++ map exprToChar es ++ ")" ++ [typeToChar t]]
        case t of Void -> return ()
                  Int  -> incStack 1
                  Doub -> incStack 2
+putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
 
 
