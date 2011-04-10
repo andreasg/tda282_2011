@@ -14,7 +14,7 @@ import Control.Monad.State
 -- | The state environment.
 type Result a = State Scope a
 
--- | A 'scope' is the 'container' for the code of a topdef. So, every topdef in
+-- | A scope is the 'container' for the code of a topdef. So, every topdef in
 -- | a Javalette program is evaluated with it's own scope.
 data Scope = Scope { stackDepth    :: Int              -- current stack depth
                    , maxStackDepth :: Int              -- maximum stack depth yet
@@ -31,7 +31,7 @@ newScope ::  String -> Scope
 newScope name = Scope 0 0 [[]] 0 0 [] name
 
 
--- | Substitute the Javalett main with this name, so as to avoid conflict with
+-- | Substitute the Javalette main with this name, so as to avoid conflict with
 -- | Java's main.
 javaletteMain :: String
 javaletteMain = "javaletteMain"
@@ -63,7 +63,7 @@ addHeader (s,FnDef t (Ident id) args _) =
 
 -- | Generate a Jasmin class-header
 classHeader :: String -> [String]
-classHeader n = [".class public " ++ n,".super java/lang/Object"]
+classHeader n = [".class public " ++ n,".super java/lang/Object\n"]
 
 
 -- | Jasmin main function, this will call the Javalette 
@@ -75,7 +75,7 @@ main n = [".method public static main([Ljava/lang/String;)V"
          ,"\tinvokestatic " ++ n ++ "/" ++ javaletteMain ++ "()I"
          ,"\tpop"
          ,"\treturn"
-         ,".end method\n"
+         ,".end method\n\n"
          ]
 
 
@@ -96,7 +96,7 @@ topDefCode (FnDef t (Ident id) args (Block ss)) =
 
 
 --------------------------------------------------------------------------------
--- State modifiers
+-- State modifiers and accessors
 --------------------------------------------------------------------------------
 -- |Get the numeric id for an identifier
 lookupId :: Ident -> Result Int
@@ -125,6 +125,12 @@ addVar t id =
                           , nextVar = nextVar s + 1})
   Doub -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
                           , nextVar = nextVar s + 2})
+
+-- |Get the next label
+getLabel :: Result String
+getLabel = do s <- get
+              modify (\s -> s {label_count = label_count s + 1})
+              return ("L" ++ show (label_count s))
 --------------------------------------------------------------------------------
 
 
@@ -145,13 +151,12 @@ stmtCode stmt =
                           (Init id expr:is') ->
                              do exprCode expr
                                 addVar t id
-                                case t of
-                                  Int -> do i <- lookupId id
-                                            istore i
-                                            stmtCode (Decl t is')
-                                  Doub -> do i <- lookupId id
-                                             dstore i
-                                             stmtCode (Decl t is')
+                                case t of Int -> do  i <- lookupId id
+                                                     istore i
+                                                     stmtCode (Decl t is')
+                                          Doub -> do i <- lookupId id
+                                                     dstore i
+                                                     stmtCode (Decl t is')
   Ass id e@(TExp t _) -> lookupId id >>= (\i -> case t of
                                                   Int  -> exprCode e >> istore i
                                                   Doub -> exprCode e >> dstore i)
@@ -162,56 +167,36 @@ stmtCode stmt =
                               Int  -> iret
                               Doub -> dret
   VRet                -> ret
-  Cond expr stmt      -> do l <- getLabel
-                            bipush 0
-                            exprCode expr
+  Cond expr stmt      -> do l <-      getLabel
+                            bipush    0
+                            exprCode  expr
                             if_icmpeq l
-                            stmtCode stmt
-                            putLabel l
-  CondElse expr s0 s1 -> do l1 <- getLabel
-                            l2 <- getLabel
-                            
-                            
-                            bipush   0
-                            exprCode expr
+                            stmtCode  stmt
+                            putLabel  l
+  CondElse expr s0 s1 -> do l1 <-     getLabel
+                            l2 <-     getLabel
+                            bipush    0
+                            exprCode  expr
                             if_icmpeq l1
-                            
-                            stmtCode s0 -- true
-                            goto l2
-
+                            stmtCode  s0 -- true
+                            goto      l2
+                            putLabel  l1
+                            stmtCode  s1 -- false
+                            putLabel  l2
+  While expr stmt     -> do l1 <- getLabel
+                            l2 <- getLabel
                             putLabel l1
-                            stmtCode s1 -- false
-                                     
-                            putLabel l2
-         
-
-                             
-
-  While expr stmt     -> do
-             l1 <- getLabel
-             l2 <- getLabel
-
-             putLabel l1
-
-             bipush 0      -- push False
-             exprCode expr -- this shuld be exither true or false
-             if_icmpeq l2
-                  
-             stmtCode stmt
-
-             goto l1 -- loop
-             putLabel l2 -- end loop
-             
-  SExp e@(TExp t e')  -> exprCode e >> case t of -- not sure if this is correct
-                                        Int  -> ipop
-                                        Doub -> dpop
-                                        Bool -> ipop
-                                        Void -> return ()
-getLabel :: Result String
-getLabel = do s <- get
-              let l = "L" ++ show (label_count s)
-              modify (\s -> s {label_count = label_count s + 1})
-              return l
+                            bipush 0      -- push False
+                            exprCode expr -- this shuld be exither true or false
+                            if_icmpeq l2
+                            stmtCode stmt
+                            goto l1 -- loop
+                            putLabel l2 -- end loop
+  SExp e@(TExp t e')  ->    exprCode e >> case t of -- not sure if this is correct
+                                           Int  -> ipop
+                                           Doub -> dpop
+                                           Bool -> ipop
+                                           Void -> return ()
 --------------------------------------------------------------------------------
 
 
@@ -222,8 +207,7 @@ getLabel = do s <- get
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) =
  case e of
-  EVar id      -> do i <- lookupId id; case t of Int  -> iload i
-                                                 Doub -> dload i
+  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload
   ELitInt i    -> bipush i
   ELitDoub d   -> dpush d
   ELitTrue     -> bipush 1
@@ -234,10 +218,9 @@ exprCode (TExp t e) =
                                    mapM_ popExpr es >> println 'I'
   EApp (Ident "printDouble") es -> printStream >> mapM_ exprCode es >> 
                                    mapM_ popExpr es >> println 'D'
-  EApp (Ident id) es   ->
-      do mapM_ exprCode es
-         mapM_ popExpr es
-         invokestatic t id es
+  EApp (Ident "readInt") es     -> undefined
+  EApp (Ident "readDouble") es  -> undefined
+  EApp (Ident id) es -> mapM_ exprCode es >> mapM_ popExpr es >> invokestatic t id es
   EString s    -> spush s
   Neg exp      -> undefined
   Not exp      -> undefined
@@ -257,10 +240,10 @@ exprCode (TExp t e) =
                             Doub -> case o of
                                       Plus  -> dadd
                                       Minus -> dsub
-  ERel e0 o e1 -> do exprCode e0
-                     exprCode e1
-                     l1 <- getLabel
+  ERel e0 o e1 -> do l1 <- getLabel
                      l2 <- getLabel
+                     exprCode e0
+                     exprCode e1
                      case o of
                        LTH -> if_icmplt l1
                        LE  -> if_icmple l1
@@ -268,13 +251,13 @@ exprCode (TExp t e) =
                        GE  -> if_icmpge l1
                        EQU -> if_icmpeq l1
                        NE  -> if_icmpne l1
-                     bipush 0
-                     goto l2
+                     bipush   0
+                     goto     l2
                      putLabel l1
-                     bipush 1
+                     bipush   1
                      putLabel l2
-  EAnd e0 e1   -> exprCode e0 >> exprCode e1 >> iand >> incStack (-1)
-  EOr  e0 e1   -> exprCode e0 >> exprCode e1 >> ior  >> incStack (-1)
+  EAnd e0 e1   -> exprCode e0 >> exprCode e1 >> iand
+  EOr  e0 e1   -> exprCode e0 >> exprCode e1 >> ior
 --------------------------------------------------------------------------------
 
 
@@ -305,8 +288,8 @@ dret        = putCode ["\tdreturn"]
 ret         = putCode ["\treturn"]
 iinc n      = putCode ["\tiinc " ++ show n ++ " 1"]
 idec n      = putCode ["\tiinc " ++ show n ++ " -1"]
-iand        = putCode ["\tand"]
-ior         = putCode ["\tor"]
+iand        = putCode ["\tand"] >> incStack (-1)
+ior         = putCode ["\tor"]  >> incStack (-1)
 goto      l = putCode ["\tgoto " ++ l]
 if_icmplt l = putCode ["\tif_icmplt " ++ l] >> incStack (-2)
 if_icmple l = putCode ["\tif_icmple " ++ l] >> incStack (-2)
