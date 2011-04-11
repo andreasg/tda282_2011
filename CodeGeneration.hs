@@ -359,7 +359,7 @@ exprCode (TExp t e) =
   EArr    t  e -> case t of
                     Int  -> exprCode e >> newarray "int"
                     Doub -> exprCode e >> newarray "double"
-  EArrLen id   -> (lookupId id >>= iload) >> arraylength
+  EArrLen id   -> (lookupId id >>= aload) >> arraylength
   EArrIdx id e -> do lookupId id >>= aload
                      exprCode e
                      case t of
