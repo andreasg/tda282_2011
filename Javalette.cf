@@ -28,6 +28,12 @@ NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
+ArrInit.   Item ::= Ident "=" "new" Type "[" Expr "]";
+
+-- or something like this, so we keep the length of the array in its type
+-- internal   Item ::= Arr Type Integer;
+
+
 separator nonempty Item "," ;
 
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
@@ -58,21 +64,23 @@ Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
 
+ArrInt.    Type ::= "int" "[]";
+
+ArrDoub.   Type ::= "double" "[]";
+
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
-
-
-
 internal   TExp. Expr ::= Type Expr;
-
-
-
 
 separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
 EVar.      Expr6 ::= Ident ;
+
+EArr.      Expr6 ::= Ident "[" Expr "]";
+
+EArrLen.   Expr6 ::= Ident "." "length";
 
 ELitInt.   Expr6 ::= Integer ;
 
