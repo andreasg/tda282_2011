@@ -166,13 +166,17 @@ stmtCode stmt =
                             case t of
                               Int  -> iret
                               Doub -> dret
+                              Bool -> iret
   VRet                -> ret
+  Cond (TExp Bool ELitTrue) stmt -> stmtCode stmt
   Cond expr stmt      -> do l <-      getLabel
                             bipush    0
                             exprCode  expr
                             if_icmpeq l
                             stmtCode  stmt
                             putLabel  l
+  CondElse (TExp Bool ELitTrue) s _ -> stmtCode s
+  CondElse (TExp Bool ELitFalse) _ s-> stmtCode s
   CondElse expr s0 s1 -> do l1 <-     getLabel
                             l2 <-     getLabel
                             bipush    0
@@ -212,14 +216,14 @@ exprCode (TExp t e) =
   ELitDoub d   -> dpush d
   ELitTrue     -> bipush 1
   ELitFalse    -> bipush 0
-  EApp (Ident "printString") [TExp _ (EString s)] ->printStream >> spush s  >> 
-                                                    incStack (-1) >> println 'S'
-  EApp (Ident "printInt") es    -> printStream >> mapM_ exprCode es >> 
-                                   mapM_ popExpr es >> println 'I'
-  EApp (Ident "printDouble") es -> printStream >> mapM_ exprCode es >> 
-                                   mapM_ popExpr es >> println 'D'
-  EApp (Ident "readInt") es     -> undefined
-  EApp (Ident "readDouble") es  -> undefined
+  EApp (Ident "printString") [TExp _ (EString s)] -> spush s  >> 
+                                                    incStack (-1) >> sprint
+  EApp (Ident "printInt") es    -> mapM_ exprCode es >> 
+                                   mapM_ popExpr es >> iprint
+  EApp (Ident "printDouble") es -> mapM_ exprCode es >> 
+                                   mapM_ popExpr es >> dprint
+  EApp (Ident "readInt") es     -> iread
+  EApp (Ident "readDouble") es  -> dread
   EApp (Ident id) es -> mapM_ exprCode es >> mapM_ popExpr es >> invokestatic t id es
   EString s    -> spush s
   Neg exp      -> undefined
@@ -256,8 +260,53 @@ exprCode (TExp t e) =
                      putLabel l1
                      bipush   1
                      putLabel l2
-  EAnd e0 e1   -> exprCode e0 >> exprCode e1 >> iand
-  EOr  e0 e1   -> exprCode e0 >> exprCode e1 >> ior
+
+  EAnd e0 e1   -> do l1 <- getLabel
+                     l2 <- getLabel
+                     l3 <- getLabel
+
+                     bipush 0
+                     exprCode e0
+                              
+                     if_icmpeq l1 -- e0 == false
+
+                     bipush 0 
+                     exprCode e1
+                     if_icmpeq l1 -- e1 == false
+                     goto l2 -- e0 && e1 == true
+                     
+
+                     putLabel l1 -- false
+                     bipush 0
+                     goto l3
+
+                     putLabel l2 -- true
+                     bipush 1
+
+                     putLabel l3
+                           
+  EOr  e0 e1   -> do l1 <- getLabel
+                     l2 <- getLabel
+
+                     bipush 1
+                     exprCode e0
+                     if_icmpeq l1 -- e0 || e1 == true
+                  
+                     bipush 1
+                     exprCode e1
+                     if_icmpeq l1 -- e1 == true
+                  
+                  
+                     bipush 0
+                     goto l2
+                  
+                     putLabel l1 -- true
+                     bipush 1
+                       
+                     putLabel l2
+
+
+
 --------------------------------------------------------------------------------
 
 
@@ -297,19 +346,18 @@ if_icmpgt l = putCode ["\tif_icmpgt " ++ l] >> incStack (-2)
 if_icmpge l = putCode ["\tif_icmpge " ++ l] >> incStack (-2)
 if_icmpeq l = putCode ["\tif_icmpeq " ++ l] >> incStack (-2)
 if_icmpne l = putCode ["\tif_icmpne " ++ l] >> incStack (-2)
-printStream = putCode ["\tgetstatic java/lang/System/out Ljava/io/PrintStream;"] >>
-              incStack 1
-println c   = putCode ["\tinvokevirtual java/io/PrintStream/println("++s++")V"]  >> 
-              incStack (-1)
-                   where s = case c of 'S' -> "Ljava/lang/String;"
-                                       'I' -> "I"
-                                       'D' -> "D"
+iprint      = putCode ["\tinvokestatic Runtime/printInt(I)V"]  >> incStack (-2)
+iread       = putCode ["\tinvokestatic Runtime/readInt()I"]    >> incStack 1
+dprint      = putCode ["\tinvokestatic Runtime/printDouble(D)V"]  >> incStack (-2)
+dread       = putCode ["\tinvokestatic Runtime/readDouble()D"] >> incStack 2
+sprint      = putCode ["\tinvokestatic Runtime/printString(Ljava/lang/String;)V"]
 invokestatic t id es = 
     do s <- get
        putCode ["\tinvokestatic " ++ className s ++ "/" ++ id ++
                 "(" ++ map exprToChar es ++ ")" ++ [typeToChar t]]
        case t of Void -> return ()
                  Int  -> incStack 1
+                 Bool -> incStack 1
                  Doub -> incStack 2
 putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
@@ -320,7 +368,7 @@ putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
 -- | converts a Type to it's Char representation.
 typeToChar :: Type -> Char
-typeToChar t = fromJust $ lookup t [(Int,'I'),(Doub,'D'),(Void,'V')]
+typeToChar t = fromJust $ lookup t [(Int,'I'),(Doub,'D'),(Void,'V'),(Bool,'I')]
 
 -- | Convert an expression to the Char representation of it's type.
 exprToChar :: Expr -> Char
