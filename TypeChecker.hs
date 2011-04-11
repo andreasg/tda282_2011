@@ -21,6 +21,7 @@ type State a = ReaderT Env Err a
 
 stdEnv =[[(Ident "printInt",    Fun Void [Int])
          ,(Ident "printDouble", Fun Void [Doub])
+         ,(Ident "printBool",   Fun Void [Bool])
          ,(Ident "readDouble",  Fun Doub [])
          ,(Ident "readInt",     Fun Int  [])
          ,(Ident "printString", Fun Void [Void])]]

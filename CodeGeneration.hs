@@ -147,7 +147,14 @@ stmtCode stmt =
                             modify (\s -> s {vars = tail (vars s)})
   Decl t is           -> case is of
                           [] -> return ()
-                          (NoInit id:is') -> addVar t id >> stmtCode (Decl t is')
+--                          (NoInit id:is') -> addVar t id >> stmtCode (Decl t is')
+                          (NoInit id:is') -> do addVar t id 
+                                                i <- lookupId id
+                                                case t of
+                                                 Int  -> bipush 0 >> istore i
+                                                 Doub -> dpush 0.0 >> dstore i
+                                                 Bool -> bipush 0 >> istore i
+                                                stmtCode (Decl t is')
                           (Init id expr:is') ->
                              do exprCode expr
                                 addVar t id
@@ -218,15 +225,17 @@ exprCode (TExp t e) =
   ELitFalse    -> bipush 0
   EApp (Ident "printString") [TExp _ (EString s)] -> spush s  >> 
                                                     incStack (-1) >> sprint
-  EApp (Ident "printInt") es    -> mapM_ exprCode es >> 
-                                   mapM_ popExpr es >> iprint
-  EApp (Ident "printDouble") es -> mapM_ exprCode es >> 
-                                   mapM_ popExpr es >> dprint
-  EApp (Ident "readInt") es     -> iread
-  EApp (Ident "readDouble") es  -> dread
+  EApp (Ident "printInt") es    -> mapM_ exprCode es >> mapM_ popExpr es >> iprint
+  EApp (Ident "printBool") es    -> mapM_ exprCode es >> mapM_ popExpr es >> iprint
+  EApp (Ident "printDouble") es -> mapM_ exprCode es >> mapM_ popExpr es >> dprint
+  EApp (Ident "readInt")    _   -> iread
+  EApp (Ident "readDouble") _   -> dread
   EApp (Ident id) es -> mapM_ exprCode es >> mapM_ popExpr es >> invokestatic t id es
   EString s    -> spush s
-  Neg exp      -> undefined
+  Neg exp      -> case t of
+                    Int  -> exprCode exp >> ineg
+                    Doub -> exprCode exp >> dneg
+                    Bool -> exprCode exp >> bipush 1 >> ixor
   Not exp      -> undefined
   EMul e0 o e1 -> exprCode e0 >> exprCode e1 >>
                   case t of Int  -> case o of 
@@ -260,53 +269,35 @@ exprCode (TExp t e) =
                      putLabel l1
                      bipush   1
                      putLabel l2
-
-  EAnd e0 e1   -> do l1 <- getLabel
-                     l2 <- getLabel
-                     l3 <- getLabel
-
-                     bipush 0
-                     exprCode e0
-                              
+  EAnd e0 e1   -> do l1 <-     getLabel
+                     l2 <-     getLabel
+                     l3 <-     getLabel
+                     bipush    0
+                     exprCode  e0
                      if_icmpeq l1 -- e0 == false
-
-                     bipush 0 
-                     exprCode e1
-                     if_icmpeq l1 -- e1 == false
-                     goto l2 -- e0 && e1 == true
-                     
-
-                     putLabel l1 -- false
-                     bipush 0
-                     goto l3
-
-                     putLabel l2 -- true
-                     bipush 1
-
-                     putLabel l3
-                           
-  EOr  e0 e1   -> do l1 <- getLabel
-                     l2 <- getLabel
-
-                     bipush 1
-                     exprCode e0
+                     bipush    0 
+                     exprCode  e1
+                     if_icmpeq l1  -- e1 == false
+                     goto      l2  -- e0 && e1 == true
+                     putLabel  l1  -- false
+                     bipush    0
+                     goto      l3
+                     putLabel  l2  -- true
+                     bipush    1
+                     putLabel  l3
+  EOr  e0 e1   -> do l1 <-     getLabel
+                     l2 <-     getLabel
+                     bipush    1
+                     exprCode  e0
                      if_icmpeq l1 -- e0 || e1 == true
-                  
-                     bipush 1
-                     exprCode e1
+                     bipush    1
+                     exprCode  e1
                      if_icmpeq l1 -- e1 == true
-                  
-                  
-                     bipush 0
-                     goto l2
-                  
-                     putLabel l1 -- true
-                     bipush 1
-                       
-                     putLabel l2
-
-
-
+                     bipush    0
+                     goto      l2
+                     putLabel  l1  -- true
+                     bipush    1
+                     putLabel  l2
 --------------------------------------------------------------------------------
 
 
@@ -322,9 +313,9 @@ dpush  n    = putCode ["\tldc2_w " ++ (show n)] >> incStack 2
 spush  s    = putCode ["\tldc "    ++ (show s)] >> incStack 1
 imul        = putCode ["\timul"] >> incStack (-1)
 idiv        = putCode ["\tidiv"] >> incStack (-1)
-imod        = putCode ["\timod"] >> incStack (-1)
+imod        = putCode ["\tirem"] >> incStack (-1)
 dmul        = putCode ["\tdmul"] >> incStack (-2)
-dmod        = putCode ["\tdmod"] >> incStack (-2)
+dmod        = putCode ["\tdrem"] >> incStack (-2)
 ddiv        = putCode ["\tddiv"] >> incStack (-2)
 iadd        = putCode ["\tiadd"] >> incStack (-1)
 isub        = putCode ["\tisub"] >> incStack (-1)
@@ -339,6 +330,9 @@ iinc n      = putCode ["\tiinc " ++ show n ++ " 1"]
 idec n      = putCode ["\tiinc " ++ show n ++ " -1"]
 iand        = putCode ["\tand"] >> incStack (-1)
 ior         = putCode ["\tor"]  >> incStack (-1)
+ixor        = putCode ["\tixor"]
+ineg        = putCode ["\tineg"]
+dneg        = putCode ["\tdneg"]
 goto      l = putCode ["\tgoto " ++ l]
 if_icmplt l = putCode ["\tif_icmplt " ++ l] >> incStack (-2)
 if_icmple l = putCode ["\tif_icmple " ++ l] >> incStack (-2)

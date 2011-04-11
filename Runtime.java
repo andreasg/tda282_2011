@@ -4,15 +4,15 @@ class Runtime {
     private static Scanner in = new Scanner(System.in);
     
     public static void printInt(int i) {
-        System.out.print(i);
+        System.out.println(i);
     }
 
     public static void printDouble(double d) {
-        System.out.print(d);
+        System.out.println(d);
     }
 
     public static void printString(String s) {
-        System.out.print(s);
+        System.out.println(s);
     }
 
     public static int readInt() {
