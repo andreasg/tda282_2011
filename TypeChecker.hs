@@ -95,6 +95,16 @@ typeStmt (Ret e:s)            rt = do local id (typeStmt s rt)
                                         else fail $ show t ++ " is not of return type " ++ show rt
 typeStmt (VRet:s)             rt | rt == Void = typeStmt s rt >>= return . (:) VRet
                                  | otherwise  = fail $ "Return type not " ++ show rt
+typeStmt (ArrAss id eidx expr:s) rt = do e0@(TExp t0 _) <- typeExpr eidx
+                                         e1@(TExp t1 _) <- typeExpr expr
+                                         t' <- typeIdent id
+                                         if t0 == Int && (case t' of ArrInt -> Int; ArrDoub -> Doub) == t1
+                                            then typeStmt s rt >>= return . (:) (ArrAss id e0 e1)
+                                            else fail "invalid assignment to array element"
+
+--                                    case t' of
+--                                      ArrInt  -> 
+--                                      ArrDoub ->
 
 
 -- Takes an expression and returns a type-annotated expression

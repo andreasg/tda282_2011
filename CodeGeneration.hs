@@ -16,6 +16,7 @@ import ReturnChecker
 -- | The state environment.
 type Result a = State Scope a
 
+
 -- | A scope is the 'container' for the code of a topdef. So, every topdef in
 -- | a Javalette program is evaluated with it's own scope.
 data Scope = Scope { stackDepth    :: Int              -- current stack depth
@@ -24,19 +25,14 @@ data Scope = Scope { stackDepth    :: Int              -- current stack depth
                    , nextVar       :: Int              -- next number to give var
                    , label_count   :: Int              -- label count
                    , code          :: [String]         -- the Jasmin code
-                   , className     :: String }         -- name of the java class
-           deriving Show
+                   , className     :: String           -- name of the java class
+                   }
+           deriving (Show,Eq)
 
 
 -- |Create a new scope, the name should be the Id of the java class
 newScope ::  String -> Scope
 newScope name = Scope 0 0 [[]] 0 0 [] name
-
-
--- | Substitute the Javalette main with this name, so as to avoid conflict with
--- | Java's main.
-javaletteMain :: String
-javaletteMain = "javaletteMain"
 --------------------------------------------------------------------------------
 
 
@@ -54,13 +50,13 @@ genCode (Program ts) name =
 -- | Generates the function-header, stack size etc.
 addHeader :: (Scope,TopDef) -> Scope
 addHeader (s,FnDef t (Ident id) args _) =
-  s { code = [".method public static " ++ id' ++
-                "(" ++ map typeToChar (map (\(Arg t id) -> t) args) ++ ")" ++
-                [typeToChar t]
+  s { code = [".method public static " ++ id ++
+                "(" ++ concat (map typeToChar (map (\(Arg t id) -> t) args)) ++ ")" ++
+                typeToChar t
              , ".limit stack "  ++ show (maxStackDepth s)
              , ".limit locals " ++ show (nextVar s)
              ] ++ code s }
-             where id' = if id == "main" then javaletteMain else id
+
 
 
 -- | Generate a Jasmin class-header
@@ -74,7 +70,7 @@ main :: String ->[String]
 main n = [".method public static main([Ljava/lang/String;)V"
          ,".limit stack 1"
          ,".limit locals 1"
-         ,"\tinvokestatic " ++ n ++ "/" ++ javaletteMain ++ "()I"
+         ,"\tinvokestatic " ++ n ++ "/main()I"
          ,"\tpop"
          ,"\treturn"
          ,".end method\n\n"
@@ -128,6 +124,8 @@ addVar t id =
                           , nextVar = nextVar s + 2})
   Bool  -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
                            , nextVar = nextVar s + 1})
+  ArrInt  -> addVar Int id
+  ArrDoub -> addVar Int id
   
 
 -- |Get the next label
@@ -157,6 +155,8 @@ stmtCode stmt =
                                                  Int  -> bipush 0 >> istore i
                                                  Doub -> dpush 0.0 >> dstore i
                                                  Bool -> bipush 0 >> istore i
+                                                 ArrInt  -> anull >> astore i
+                                                 ArrDoub -> anull >> astore i
                                                 stmtCode (Decl t is')
                           (Init id expr:is') ->
                              do exprCode expr
@@ -167,10 +167,18 @@ stmtCode stmt =
                                           Doub -> do i <- lookupId id
                                                      dstore i
                                                      stmtCode (Decl t is')
+                                          ArrInt -> do i <- lookupId id
+                                                       astore i
+                                                       stmtCode (Decl t is')
+                                          ArrDoub -> do i <- lookupId id
+                                                        astore i
+                                                        stmtCode (Decl t is')
   Ass id e@(TExp t e') -> lookupId id >>= (\i -> case t of
                                                   Int  -> exprCode e >> istore i
                                                   Doub -> exprCode e >> dstore i
-                                                  Bool -> exprCode e >> istore i)
+                                                  Bool -> exprCode e >> istore i
+                                                  ArrInt -> exprCode e >> astore i
+                                                  ArrDoub -> exprCode e >> astore i)
   Incr id             -> lookupId id >>= iinc
   Decr id             -> lookupId id >>= idec
   Ret e@(TExp t _)    -> do exprCode e
@@ -178,6 +186,8 @@ stmtCode stmt =
                               Int  -> iret
                               Doub -> dret
                               Bool -> iret
+                              ArrDoub -> aret
+                              ArrInt  -> aret
   VRet                -> ret
   Cond (TExp Bool ELitTrue) stmt -> stmtCode stmt
   Cond (TExp Bool ELitFalse) stmt -> return ()
@@ -220,6 +230,9 @@ stmtCode stmt =
                                            Doub -> dpop
                                            Bool -> ipop
                                            Void -> return ()
+  ArrAss id e0 e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
+  ArrAss id e0 e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
+
 --------------------------------------------------------------------------------
 
 
@@ -230,7 +243,9 @@ stmtCode stmt =
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) =
  case e of
-  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload; Bool -> iload
+  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload; 
+                                             Bool -> iload; ArrInt -> aload; 
+                                             ArrDoub -> aload;
   ELitInt i    -> bipush i
   ELitDoub d   -> dpush d
   ELitTrue     -> bipush 1
@@ -341,12 +356,31 @@ exprCode (TExp t e) =
                      putLabel  l1  -- true
                      bipush    1
                      putLabel  l2
+  EArr    t  e -> case t of
+                    Int  -> exprCode e >> newarray "int"
+                    Doub -> exprCode e >> newarray "double"
+  EArrLen id   -> (lookupId id >>= iload) >> arraylength
+  EArrIdx id e -> do lookupId id >>= aload
+                     exprCode e
+                     case t of
+                       Doub -> daload
+                       Int  -> iaload
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 -- Jasmin Instructions
 --------------------------------------------------------------------------------
+anull        = putCode ["\taconst_null"] >> incStack 1
+aret        = putCode ["\tareturn"] >> incStack (-1)
+aload     n = putCode ["\taload " ++ (show n)] >> incStack 1
+iastore     = putCode ["\tiastore"] >> incStack (-3)
+dastore     = putCode ["\tdastore"] >> incStack (-4)
+astore    n = putCode ["\tastore " ++ (show n)] >> incStack (-1)
+daload      = putCode ["\tdaload"]
+iaload      = putCode ["\tiaload"] >> incStack (-1)
+newarray  a = putCode ["\tnewarray " ++ a]
+arraylength = putCode ["\tarraylength"]
 iload  n    = putCode ["\tiload "  ++ (show n)] >> incStack 1
 istore n    = putCode ["\tistore " ++ (show n)] >> incStack (-1)
 dload  n    = putCode ["\tdload "  ++ (show n)] >> incStack 2
@@ -399,11 +433,13 @@ sprint      = putCode ["\tinvokestatic Runtime/printString(Ljava/lang/String;)V"
 invokestatic t id es = 
     do s <- get
        putCode ["\tinvokestatic " ++ className s ++ "/" ++ id ++
-                "(" ++ map exprToChar es ++ ")" ++ [typeToChar t]]
+                "(" ++ concat (map exprToChar es) ++ ")" ++ typeToChar t]
        case t of Void -> return ()
                  Int  -> incStack 1
                  Bool -> incStack 1
                  Doub -> incStack 2
+                 ArrInt -> incStack 1
+                 ArrDoub -> incStack 1
 putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
 
@@ -412,18 +448,19 @@ putLabel l  = putCode [l++":"]
 -- Util functions
 --------------------------------------------------------------------------------
 -- | converts a Type to it's Char representation.
-typeToChar :: Type -> Char
-typeToChar t = fromJust $ lookup t [(Int,'I'),(Doub,'D'),(Void,'V'),(Bool,'I')]
+typeToChar :: Type -> String
+typeToChar t = fromJust $ lookup t [(Int,"I"),(Doub,"D"),(Void,"V"),(Bool,"I"),(ArrInt,"[I"),(ArrDoub,"[D")]
 
 -- | Convert an expression to the Char representation of it's type.
-exprToChar :: Expr -> Char
+exprToChar :: Expr -> String
 exprToChar (TExp t _) = typeToChar t
-
 -- | Reduces the stack-counter by the stack-space of the type of the expression.
 popExpr :: Expr -> Result ()
 popExpr (TExp _ (EString _)) = incStack (-1)
 popExpr (TExp t _) = case t of Int  -> incStack (-1)
                                Doub -> incStack (-2)
                                Bool -> incStack (-1)
+                               ArrInt -> incStack (-1)
+                               ArrDoub -> incStack (-1)
                                Void -> return ()
 --------------------------------------------------------------------------------

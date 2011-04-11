@@ -36,6 +36,8 @@ Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
+ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr ";" ;
+
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
