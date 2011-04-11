@@ -19,6 +19,7 @@ check s = case pProgram (myLexer s) of
             Ok  tree -> case typecheck tree of
                           Bad err -> do putStrLn "TYPE ERROR"
                                         putStrLn err
+                                        putStrLn (show tree)
                                         exitFailure 
                           Ok e    -> putStrLn $ "OK\n\n" ++ (show e)
 --                          Ok p    -> testGenCode p "Main"

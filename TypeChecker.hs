@@ -51,7 +51,7 @@ addVars :: Type -> [Item] -> Env -> Env
 addVars t is (e:es) = (foldr (:) e (zip (map f is) (repeat t))):es
     where f (NoInit id) = id
           f (Init id _) = id
-          f (ArrInit id t e) = id
+--          f (ArrInit id t e) = id
 
 
 checkTopDef :: TopDef -> State TopDef
@@ -127,15 +127,21 @@ typeExpr e@(EArrLen id)   = do t <- typeIdent id
                                if (t /= ArrInt && t /= ArrDoub)
                                 then fail ".length operator must be applied to array type"
                                 else return $ TExp Int e
-typeExpr e@(EArr id expr) = do idxE@(TExp t _) <- typeExpr expr
-                               if t == Int  
-                                  then do t <- typeIdent id
-                                          if (t /= ArrInt && t /= ArrDoub)
-                                           then fail "can only index on arrays"
-                                           else case t of
-                                                 ArrInt  -> return $ TExp Int  (EArr id idxE)
-                                                 ArrDoub -> return $ TExp Doub (EArr id idxE)
-                                  else fail "array index must be of type int"
+typeExpr e@(EArr t expr) = do e@(TExp t' e') <- typeExpr expr
+                              e'' <- typeExpr e'
+                              case t of 
+                                Int  -> return $ TExp ArrInt  (EArr t e)
+                                Doub -> return $ TExp ArrDoub (EArr t e)
+                                _    -> fail "invalid array type"
+typeExpr e@(EArrIdx id expr) = do idxE@(TExp t _) <- typeExpr expr
+                                  if t == Int  
+                                    then do t <- typeIdent id
+                                            if (t /= ArrInt && t /= ArrDoub)
+                                             then fail "can only index on arrays"
+                                             else case t of
+                                                   ArrInt  -> return $ TExp Int  (EArrIdx id idxE)
+                                                   ArrDoub -> return $ TExp Doub (EArrIdx id idxE)
+                                    else fail "array index must be of type int"
 
 
 
@@ -201,42 +207,3 @@ checkItem t (Init id e) = do
                then return (Init id (TExp t' e'))
                else fail $ "Expression " ++ show e ++ " has the wrong type"
     _       -> fail $ "Variable " ++ show id ++ " already exists"
-
-checkItem t (ArrInit id t' e) =
-
-  -- check so we actually declare an array            
-  if (t /= ArrInt && t /= ArrDoub) 
-    then fail "Array type must be etither int[] or double[]"
-
-    -- check so the "new Type[...]" matches the declared arrayType
-    else if not (arrType t t')
-          then fail "array element type of wrong type"
-          
-          -- check so we set the length using an Int expression
-          else do idxE@(TExp t'' _) <- typeExpr e
-                  if t'' /= Int
-                     then fail "array index must be of type int"
-                     
-                     -- check so it's not already defined
-                     else do (c:cs) <- ask
-                             case lookup id c of
-                               Nothing -> return (ArrInit id t' idxE)
-                               _       -> fail $ "Variable " ++ show id ++ "already defined"
- where arrType :: Type -> Type -> Bool
-       arrType ArrInt Int = True
-       arrType Int ArrInt = True
-       arrType Doub ArrDoub = True
-       arrType ArrDoub Doub = True
-       arrType _ _ = False
-
-
-{-
-typeStmt (Decl IntArr  (ArrInit id t expr:ss)) = if t /= Int 
-                                                   then fail "int[] array must have elements of type int"
-                                                   else do e@(TExp t' _) <- typeExpr expr
-                                                           if t' /= Int
-                                                             then fail "array length must be integer"
-                                                             else do ss <- local (addVars IntArr 
-                                                                
-
--}

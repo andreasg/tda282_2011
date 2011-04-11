@@ -28,7 +28,7 @@ NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
-ArrInit.   Item ::= Ident "=" "new" Type "[" Expr "]";
+-- ArrInit.   Item ::= Ident "=" "new" Type "[" Expr "]";
 
 -- or something like this, so we keep the length of the array in its type
 -- internal   Item ::= Arr Type Integer;
@@ -76,9 +76,11 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
+EArr.      Expr6 ::= "new" Type "[" Expr "]";
+
 EVar.      Expr6 ::= Ident ;
 
-EArr.      Expr6 ::= Ident "[" Expr "]";
+EArrIdx.   Expr6 ::= Ident "[" Expr "]";
 
 EArrLen.   Expr6 ::= Ident "." "length";
 
