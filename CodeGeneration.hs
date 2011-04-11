@@ -125,6 +125,9 @@ addVar t id =
                           , nextVar = nextVar s + 1})
   Doub -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
                           , nextVar = nextVar s + 2})
+  Bool  -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
+                           , nextVar = nextVar s + 1})
+  
 
 -- |Get the next label
 getLabel :: Result String
@@ -164,9 +167,10 @@ stmtCode stmt =
                                           Doub -> do i <- lookupId id
                                                      dstore i
                                                      stmtCode (Decl t is')
-  Ass id e@(TExp t _) -> lookupId id >>= (\i -> case t of
+  Ass id e@(TExp t e') -> lookupId id >>= (\i -> case t of
                                                   Int  -> exprCode e >> istore i
-                                                  Doub -> exprCode e >> dstore i)
+                                                  Doub -> exprCode e >> dstore i
+                                                  Bool -> exprCode e >> istore i)
   Incr id             -> lookupId id >>= iinc
   Decr id             -> lookupId id >>= idec
   Ret e@(TExp t _)    -> do exprCode e
@@ -218,7 +222,7 @@ stmtCode stmt =
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) =
  case e of
-  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload
+  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload; Bool -> iload
   ELitInt i    -> bipush i
   ELitDoub d   -> dpush d
   ELitTrue     -> bipush 1
@@ -226,7 +230,6 @@ exprCode (TExp t e) =
   EApp (Ident "printString") [TExp _ (EString s)] -> spush s  >> 
                                                     incStack (-1) >> sprint
   EApp (Ident "printInt") es    -> mapM_ exprCode es >> mapM_ popExpr es >> iprint
-  EApp (Ident "printBool") es    -> mapM_ exprCode es >> mapM_ popExpr es >> iprint
   EApp (Ident "printDouble") es -> mapM_ exprCode es >> mapM_ popExpr es >> dprint
   EApp (Ident "readInt")    _   -> iread
   EApp (Ident "readDouble") _   -> dread
@@ -236,7 +239,28 @@ exprCode (TExp t e) =
                     Int  -> exprCode exp >> ineg
                     Doub -> exprCode exp >> dneg
                     Bool -> exprCode exp >> bipush 1 >> ixor
-  Not exp      -> undefined
+  Not exp      -> case t of
+                    Int  -> do l1 <- getLabel
+                               l2 <- getLabel
+                               exprCode exp
+                               ifeq     l1
+                               bipush   1
+                               goto l2
+                               putLabel l1
+                               bipush   0
+                               putLabel l2
+                    Doub -> do l1 <- getLabel
+                               l2 <- getLabel
+                               dload 0.0
+                               exprCode exp
+                               dcmpg
+                               ifeq     l1
+                               bipush   1
+                               goto     l2
+                               putLabel l1
+                               bipush   0
+                               putLabel l2
+                    Bool -> exprCode exp >> bipush 1 >> ixor
   EMul e0 o e1 -> exprCode e0 >> exprCode e1 >>
                   case t of Int  -> case o of 
                                       Div   -> idiv
@@ -246,29 +270,40 @@ exprCode (TExp t e) =
                                       Div   -> ddiv
                                       Mod   -> dmod
                                       Times -> dmul
-  EAdd e0 o e1 -> exprCode e0 >> exprCode e1 >>
-                  case t of Int  -> case o of
-                                      Plus  -> iadd
-                                      Minus -> isub
-                            Doub -> case o of
-                                      Plus  -> dadd
-                                      Minus -> dsub
-  ERel e0 o e1 -> do l1 <- getLabel
-                     l2 <- getLabel
-                     exprCode e0
+  EAdd e0 o e1 -> do exprCode e0
                      exprCode e1
-                     case o of
-                       LTH -> if_icmplt l1
-                       LE  -> if_icmple l1
-                       GTH -> if_icmpgt l1
-                       GE  -> if_icmpge l1
-                       EQU -> if_icmpeq l1
-                       NE  -> if_icmpne l1
-                     bipush   0
-                     goto     l2
-                     putLabel l1
-                     bipush   1
-                     putLabel l2
+                     case t of 
+                       Int  -> case o of
+                                 Plus  -> iadd
+                                 Minus -> isub
+                       Doub -> case o of
+                                 Plus  -> dadd
+                                 Minus -> dsub
+  ERel e0@(TExp t' _) o e1 -> do l1 <- getLabel
+                                 l2 <- getLabel
+                                 exprCode e0
+                                 exprCode e1
+                                 if t' == Doub 
+                                  then dcmpg >>
+                                       case o of
+                                         LTH -> iflt l1
+                                         LE  -> ifle l1
+                                         GTH -> ifgt l1
+                                         GE  -> ifge l1
+                                         EQU -> ifeq l1
+                                         NE  -> ifne l1
+                                  else case o of
+                                         LTH -> if_icmplt l1
+                                         LE  -> if_icmple l1
+                                         GTH -> if_icmpgt l1
+                                         GE  -> if_icmpge l1
+                                         EQU -> if_icmpeq l1
+                                         NE  -> if_icmpne l1
+                                 bipush   0
+                                 goto     l2
+                                 putLabel l1
+                                 bipush   1
+                                 putLabel l2
   EAnd e0 e1   -> do l1 <-     getLabel
                      l2 <-     getLabel
                      l3 <-     getLabel
@@ -308,7 +343,7 @@ iload  n    = putCode ["\tiload "  ++ (show n)] >> incStack 1
 istore n    = putCode ["\tistore " ++ (show n)] >> incStack (-1)
 dload  n    = putCode ["\tdload "  ++ (show n)] >> incStack 2
 dstore n    = putCode ["\tdstore " ++ (show n)] >> incStack (-2)
-bipush n    = putCode ["\tbipush " ++ (show n)] >> incStack 1
+bipush n    = putCode ["\tldc " ++ (show n)] >> incStack 1
 dpush  n    = putCode ["\tldc2_w " ++ (show n)] >> incStack 2
 spush  s    = putCode ["\tldc "    ++ (show s)] >> incStack 1
 imul        = putCode ["\timul"] >> incStack (-1)
@@ -334,15 +369,23 @@ ixor        = putCode ["\tixor"]
 ineg        = putCode ["\tineg"]
 dneg        = putCode ["\tdneg"]
 goto      l = putCode ["\tgoto " ++ l]
+dcmpg       = putCode ["\tdcmpg"] >> incStack (-3)
 if_icmplt l = putCode ["\tif_icmplt " ++ l] >> incStack (-2)
 if_icmple l = putCode ["\tif_icmple " ++ l] >> incStack (-2)
 if_icmpgt l = putCode ["\tif_icmpgt " ++ l] >> incStack (-2)
 if_icmpge l = putCode ["\tif_icmpge " ++ l] >> incStack (-2)
 if_icmpeq l = putCode ["\tif_icmpeq " ++ l] >> incStack (-2)
 if_icmpne l = putCode ["\tif_icmpne " ++ l] >> incStack (-2)
-iprint      = putCode ["\tinvokestatic Runtime/printInt(I)V"]  >> incStack (-2)
+
+iflt l = putCode ["\tiflt " ++ l] >> incStack (-1)
+ifle l = putCode ["\tifle " ++ l] >> incStack (-1)
+ifgt l = putCode ["\tifgt " ++ l] >> incStack (-1)
+ifge l = putCode ["\tifge " ++ l] >> incStack (-1)
+ifeq l = putCode ["\tifeq " ++ l] >> incStack (-1)
+ifne l = putCode ["\tifne " ++ l] >> incStack (-1)
+iprint      = putCode ["\tinvokestatic Runtime/printInt(I)V"] -- >> incStack (-1)
 iread       = putCode ["\tinvokestatic Runtime/readInt()I"]    >> incStack 1
-dprint      = putCode ["\tinvokestatic Runtime/printDouble(D)V"]  >> incStack (-2)
+dprint      = putCode ["\tinvokestatic Runtime/printDouble(D)V"] -- >> incStack (-2)
 dread       = putCode ["\tinvokestatic Runtime/readDouble()D"] >> incStack 2
 sprint      = putCode ["\tinvokestatic Runtime/printString(Ljava/lang/String;)V"]
 invokestatic t id es = 
@@ -373,5 +416,6 @@ popExpr :: Expr -> Result ()
 popExpr (TExp _ (EString _)) = incStack (-1)
 popExpr (TExp t _) = case t of Int  -> incStack (-1)
                                Doub -> incStack (-2)
+                               Bool -> incStack (-1)
                                Void -> return ()
 --------------------------------------------------------------------------------

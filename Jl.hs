@@ -28,7 +28,9 @@ check n s = case pProgram (myLexer s) of
                                          exitFailure 
                            Ok p    -> do ePutStrLn "OK"
                                          let name = (dropExtensions . takeFileName) n
-                                         let dir  = takeDirectory n
+                                         let dir  = case takeDirectory n of
+                                                      "" -> "."
+                                                      d  -> d
                                          let code = genCode p name
                                          writeFile (dir ++ "/" ++ name++".j") code
                                          runCommand $ "java -jar jasmin.jar -d " ++ dir ++ " " ++ (dir++"/"++name++".j")
