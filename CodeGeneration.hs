@@ -8,6 +8,8 @@ import Data.List (nubBy)
 import Data.Maybe (fromJust)
 import Control.Monad.State
 
+import ReturnChecker
+
 --------------------------------------------------------------------------------
 -- Types, Data and Constants
 --------------------------------------------------------------------------------
@@ -81,9 +83,8 @@ main n = [".method public static main([Ljava/lang/String;)V"
 
 -- | Generate code for a TopDef, returns the computed scope and the TopDef
 runTopDef :: String -> TopDef -> (Scope,TopDef)
-runTopDef name t = case runState (topDefCode t) (newScope name) of
-                    (s,_) ->  (s,t)
-
+runTopDef name t = (fst $ runState (topDefCode t) (newScope name), t)
+    
 
 -- | Build the scope for a function
 topDefCode :: TopDef -> Result Scope
@@ -150,7 +151,6 @@ stmtCode stmt =
                             modify (\s -> s {vars = tail (vars s)})
   Decl t is           -> case is of
                           [] -> return ()
---                          (NoInit id:is') -> addVar t id >> stmtCode (Decl t is')
                           (NoInit id:is') -> do addVar t id 
                                                 i <- lookupId id
                                                 case t of
@@ -161,7 +161,7 @@ stmtCode stmt =
                           (Init id expr:is') ->
                              do exprCode expr
                                 addVar t id
-                                case t of Int -> do  i <- lookupId id
+                                case t of Int  -> do i <- lookupId id
                                                      istore i
                                                      stmtCode (Decl t is')
                                           Doub -> do i <- lookupId id
@@ -180,6 +180,7 @@ stmtCode stmt =
                               Bool -> iret
   VRet                -> ret
   Cond (TExp Bool ELitTrue) stmt -> stmtCode stmt
+  Cond (TExp Bool ELitFalse) stmt -> return ()
   Cond expr stmt      -> do l <-      getLabel
                             bipush    0
                             exprCode  expr
@@ -188,16 +189,23 @@ stmtCode stmt =
                             putLabel  l
   CondElse (TExp Bool ELitTrue) s _ -> stmtCode s
   CondElse (TExp Bool ELitFalse) _ s-> stmtCode s
-  CondElse expr s0 s1 -> do l1 <-     getLabel
-                            l2 <-     getLabel
-                            bipush    0
-                            exprCode  expr
-                            if_icmpeq l1
-                            stmtCode  s0 -- true
-                            goto      l2
-                            putLabel  l1
-                            stmtCode  s1 -- false
-                            putLabel  l2
+  CondElse expr s0 s1 ->  if returns [s0] && returns [s1] 
+                            then do l1 <-     getLabel
+                                    exprCode  expr
+                                    ifeq      l1
+                                    stmtCode  s0
+                                    putLabel  l1
+                                    stmtCode  s1
+                            else do l1 <-     getLabel
+                                    l2 <-     getLabel
+                                    bipush    0
+                                    exprCode  expr
+                                    if_icmpeq l1
+                                    stmtCode  s0 -- true
+                                    goto      l2
+                                    putLabel  l1
+                                    stmtCode  s1 -- false
+                                    putLabel  l2
   While expr stmt     -> do l1 <- getLabel
                             l2 <- getLabel
                             putLabel l1

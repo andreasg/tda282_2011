@@ -3,7 +3,6 @@ module TypeChecker (typecheck) where
 
 -- BNF Converter imports
 import AbsJavalette
-import AbsJavalette
 import PrintJavalette
 import ErrM
 
@@ -11,6 +10,8 @@ import Debug.Trace (putTraceMsg,trace)
 import System.IO.Unsafe (unsafePerformIO)
 import Data.List (nubBy)
 import Control.Monad.Reader
+
+import ReturnChecker
 
 
 -- Environment, pair each identifier with it's type
@@ -186,20 +187,3 @@ checkItem t (Init id e) = do
                then return (Init id (TExp t' e'))
                else fail $ "Expression " ++ show e ++ " has the wrong type"
     _       -> fail $ "Variable " ++ show id ++ " already exists"
-
-
--- check if a program returns correctly
-returnCheck :: [TopDef] -> Bool
-returnCheck fs = not $ elem False (map (\(FnDef _ _ _ (Block stms)) -> returns stms) fs')
-    where fs' = filter (\(FnDef t _ _ _) -> t /= Void) fs -- get the non-void funs
-          returns :: [Stmt] -> Bool
-          returns []                              = False
-          returns (Ret _:_)                       = True
-          returns (BStmt (Block stms):xs)         = returns stms || returns xs
-          returns (CondElse ELitTrue s1 _  : ss)  = returns [s1] || returns ss
-          returns (CondElse ELitFalse _ s2 : ss)  = returns [s2] || returns ss
-          returns (CondElse _ s1 s2 : ss)         = (returns [s1] && returns [s2]) || returns ss
-          returns (Cond ELitTrue s1:ss)           = returns [s1] || returns ss
-          returns (Cond ELitFalse _:ss)           = returns ss
-          returns (While ELitTrue s : ss)         = returns [s] || returns ss
-          returns (_:ss)                          = returns ss
