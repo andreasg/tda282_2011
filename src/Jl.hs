@@ -2,6 +2,7 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
 import System.FilePath
+import System.Directory
 import System.IO
 import System.Process
 
@@ -33,8 +34,16 @@ check n s = case pProgram (myLexer s) of
                                                       d  -> d
                                          let code = genCode p name
                                          writeFile (dir ++ "/" ++ name++".j") code
-                                         runCommand $ "java -jar jasmin.jar -d " ++ dir ++ " " ++ (dir++"/"++name++".j")
+                                         j <- jasmin
+                                         runCommand $ "java -jar " ++ j ++ " -d " ++ dir ++ " " ++ (dir++"/"++name++".j")
                                          return ()
+                                                where
+                                                  jasmin :: IO String
+                                                  jasmin = do d <- getCurrentDirectory
+                                                              b0 <- doesFileExist (d++"/lib/jasmin.jar")
+                                                              return $ if b0 then "lib/jasmin.jar" else "jasmin.jar"
+
+
   where ePutStrLn = hPutStrLn stderr
                                          
 
