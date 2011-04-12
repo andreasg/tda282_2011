@@ -233,6 +233,62 @@ stmtCode stmt =
   ArrAss id e0 e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
   ArrAss id e0 e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
 
+  For t' i0 i1 s -> do modify (\s -> s {vars = ([]:vars s)})
+                       l1 <- getLabel
+                       l2 <- getLabel
+
+                       -- our element variable
+                       addVar t' i0
+                       elem <- lookupId i0
+
+                       -- get the array
+                       ar <- lookupId i1
+                       
+                       -- create a count variable and init to 0
+                       addVar Int (Ident "__counter")
+                       count <- lookupId (Ident "__counter")
+                       bipush 0
+                       istore count
+                       
+
+                       putLabel l1
+
+
+                       iload count
+                       aload ar
+                       arraylength
+
+                       if_icmpge   l2 -- jump to l2 if we are done
+                       
+                       -- load the current value
+                       aload ar
+                       iload count
+                       case t' of
+                         Int  -> iaload >> istore elem
+                         Doub -> daload >> dstore elem
+
+                       -- run the statemnt
+                       stmtCode s
+
+                       -- save the value
+                       aload ar
+                       iload count
+                       case t' of
+                         Int  -> iload elem >> iastore
+                         Doub -> dload elem >> dastore
+
+                       -- increment
+                       iinc count
+                       
+                       -- jump
+                       goto l1
+
+                       -- done
+                       putLabel l2
+
+                       -- exit the scope
+                       modify (\s -> s {vars = tail (vars s)})
+
 --------------------------------------------------------------------------------
 
 

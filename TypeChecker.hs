@@ -101,8 +101,8 @@ typeStmt (ArrAss id eidx expr:s) rt = do e0@(TExp t0 _) <- typeExpr eidx
                                          if t0 == Int && (case t' of ArrInt -> Int; ArrDoub -> Doub) == t1
                                             then typeStmt s rt >>= return . (:) (ArrAss id e0 e1)
                                             else fail "invalid assignment to array element"
-typeStmt (f@(For t id _ _):ss) rt = local ((:)[(id, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
-                                                                          return . (:) f)
+typeStmt (f@(For t i0 i1 _):ss) rt = local ((:)[(i0, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
+                                                                          return . (:) (For t i0 i1 s))
    where typeFor :: Stmt -> State Stmt
          typeFor (For t i0 i1 s) = do t' <- typeIdent i1
                                       case t' of
