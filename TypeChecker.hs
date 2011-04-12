@@ -101,11 +101,14 @@ typeStmt (ArrAss id eidx expr:s) rt = do e0@(TExp t0 _) <- typeExpr eidx
                                          if t0 == Int && (case t' of ArrInt -> Int; ArrDoub -> Doub) == t1
                                             then typeStmt s rt >>= return . (:) (ArrAss id e0 e1)
                                             else fail "invalid assignment to array element"
-
---                                    case t' of
---                                      ArrInt  -> 
---                                      ArrDoub ->
-
+typeStmt (f@(For t id _ _):ss) rt = local ((:)[(id, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
+                                                                          return . (:) f)
+   where typeFor :: Stmt -> State Stmt
+         typeFor (For t i0 i1 s) = do t' <- typeIdent i1
+                                      case t' of
+                                        ArrInt  -> do ss <- typeStmt [s] rt ;return $ head ss
+                                        ArrDoub -> do ss <- typeStmt [s] rt ;return $ head ss
+                                        _       -> fail "element and array must be of same type in for-stmt"
 
 -- Takes an expression and returns a type-annotated expression
 typeExpr :: Expr -> State Expr

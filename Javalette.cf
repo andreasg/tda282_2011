@@ -28,12 +28,6 @@ NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
--- ArrInit.   Item ::= Ident "=" "new" Type "[" Expr "]";
-
--- or something like this, so we keep the length of the array in its type
--- internal   Item ::= Arr Type Integer;
-
-
 separator nonempty Item "," ;
 
 ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr ";" ;
@@ -53,6 +47,8 @@ Cond.      Stmt ::= "if" "(" Expr ")" Stmt  ;
 CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
+
+For.       Stmt ::= "for" "(" Type Ident ":" Ident ")" Stmt;
 
 SExp.      Stmt ::= Expr  ";" ;
 
