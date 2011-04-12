@@ -245,14 +245,12 @@ stmtCode stmt =
                        ar <- lookupId i1
                        
                        -- create a count variable and init to 0
-                       addVar Int (Ident "__counter")
-                       count <- lookupId (Ident "__counter")
+                       addVar Int (Ident "___counter___")
+                       count <- lookupId (Ident "___counter___")
                        bipush 0
                        istore count
-                       
 
                        putLabel l1
-
 
                        iload count
                        aload ar
@@ -299,8 +297,8 @@ stmtCode stmt =
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) =
  case e of
-  EVar id      -> lookupId id >>=  case t of Int -> iload;  Doub -> dload; 
-                                             Bool -> iload; ArrInt -> aload; 
+  EVar id      -> lookupId id >>=  case t of Int     -> iload;  Doub   -> dload; 
+                                             Bool    -> iload;  ArrInt -> aload; 
                                              ArrDoub -> aload;
   ELitInt i    -> bipush i
   ELitDoub d   -> dpush d
@@ -474,7 +472,6 @@ if_icmpgt l = putCode ["\tif_icmpgt " ++ l] >> incStack (-2)
 if_icmpge l = putCode ["\tif_icmpge " ++ l] >> incStack (-2)
 if_icmpeq l = putCode ["\tif_icmpeq " ++ l] >> incStack (-2)
 if_icmpne l = putCode ["\tif_icmpne " ++ l] >> incStack (-2)
-
 iflt l = putCode ["\tiflt " ++ l] >> incStack (-1)
 ifle l = putCode ["\tifle " ++ l] >> incStack (-1)
 ifgt l = putCode ["\tifgt " ++ l] >> incStack (-1)
