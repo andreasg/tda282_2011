@@ -214,8 +214,8 @@ typeExpr e@(EArrLen id)   = do t <- typeIdent id
 typeExpr e@(EArr t dim)  = do dim' <- mapM checkDimen dim
 --                              e'' <- typeExpr e'
                               case t of 
-                                Int  -> return $ TExp (ArrInt (arrDimen dim))  (EArr t dim)
-                                Doub -> return $ TExp (ArrDoub (arrDimen dim)) (EArr t dim)
+                                Int  -> return $ TExp (ArrInt (arrDimen dim))  (EArr t dim')
+                                Doub -> return $ TExp (ArrDoub (arrDimen dim)) (EArr t dim')
                                 _    -> fail "invalid array type"
 typeExpr e@(EArrIdx id ds) = do ds' <- mapM checkDimen ds
                                 t   <- typeIdent id

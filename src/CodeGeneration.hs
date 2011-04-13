@@ -42,7 +42,7 @@ newScope name = Scope 0 0 [[]] 0 0 [] name
 -- | Generates a string of Jasmin code from a Program
 genCode :: Program -> String -> String
 genCode (Program ts) name =
-  unlines $ classHeader name ++ main name ++ 
+  unlines $ classHeader name ++ main name ++
             map f (map addHeader (map (runTopDef name) ts))
         where f s = unlines (code s)
 
@@ -64,7 +64,7 @@ classHeader :: String -> [String]
 classHeader n = [".class public " ++ n,".super java/lang/Object\n"]
 
 
--- | Jasmin main function, this will call the Javalette 
+-- | Jasmin main function, this will call the Javalette
 -- | main-function and then return.
 main :: String ->[String]
 main n = [".method public static main([Ljava/lang/String;)V"
@@ -80,7 +80,7 @@ main n = [".method public static main([Ljava/lang/String;)V"
 -- | Generate code for a TopDef, returns the computed scope and the TopDef
 runTopDef :: String -> TopDef -> (Scope,TopDef)
 runTopDef name t = (fst $ runState (topDefCode t) (newScope name), t)
-    
+
 
 -- | Build the scope for a function
 topDefCode :: TopDef -> Result Scope
@@ -116,7 +116,7 @@ incStack n = modify (\s ->
 
 -- |Add a variable to the scope, and assign it a numeric id.
 addVar :: Type -> Ident -> Result ()
-addVar t id = 
+addVar t id =
  case t of
   Int  -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
                           , nextVar = nextVar s + 1})
@@ -124,9 +124,9 @@ addVar t id =
                           , nextVar = nextVar s + 2})
   Bool  -> modify (\s -> s { vars = ((id,nextVar s):head (vars s)):tail (vars s)
                            , nextVar = nextVar s + 1})
-  ArrInt  -> addVar Int id
-  ArrDoub -> addVar Int id
-  
+  ArrInt  ds -> addVar Int id
+  ArrDoub ds -> addVar Int id
+
 
 -- |Get the next label
 getLabel :: Result String
@@ -149,14 +149,14 @@ stmtCode stmt =
                             modify (\s -> s {vars = tail (vars s)})
   Decl t is           -> case is of
                           [] -> return ()
-                          (NoInit id:is') -> do addVar t id 
+                          (NoInit id:is') -> do addVar t id
                                                 i <- lookupId id
                                                 case t of
                                                  Int  -> bipush 0 >> istore i
                                                  Doub -> dpush 0.0 >> dstore i
                                                  Bool -> bipush 0 >> istore i
-                                                 ArrInt  -> anull >> astore i
-                                                 ArrDoub -> anull >> astore i
+                                                 ArrInt  _ -> anull >> astore i
+                                                 ArrDoub _ -> anull >> astore i
                                                 stmtCode (Decl t is')
                           (Init id expr:is') ->
                              do exprCode expr
@@ -167,18 +167,18 @@ stmtCode stmt =
                                           Doub -> do i <- lookupId id
                                                      dstore i
                                                      stmtCode (Decl t is')
-                                          ArrInt -> do i <- lookupId id
-                                                       astore i
-                                                       stmtCode (Decl t is')
-                                          ArrDoub -> do i <- lookupId id
-                                                        astore i
-                                                        stmtCode (Decl t is')
+                                          ArrInt _ -> do i <- lookupId id
+                                                         astore i
+                                                         stmtCode (Decl t is')
+                                          ArrDoub _ -> do i <- lookupId id
+                                                          astore i
+                                                          stmtCode (Decl t is')
   Ass id e@(TExp t e') -> lookupId id >>= (\i -> case t of
                                                   Int  -> exprCode e >> istore i
                                                   Doub -> exprCode e >> dstore i
                                                   Bool -> exprCode e >> istore i
-                                                  ArrInt -> exprCode e >> astore i
-                                                  ArrDoub -> exprCode e >> astore i)
+                                                  ArrInt  _ -> exprCode e >> astore i
+                                                  ArrDoub _ -> exprCode e >> astore i)
   Incr id             -> lookupId id >>= iinc
   Decr id             -> lookupId id >>= idec
   Ret e@(TExp t _)    -> do exprCode e
@@ -186,8 +186,8 @@ stmtCode stmt =
                               Int  -> iret
                               Doub -> dret
                               Bool -> iret
-                              ArrDoub -> aret
-                              ArrInt  -> aret
+                              ArrDoub _ -> aret
+                              ArrInt  _ -> aret
   VRet                -> ret
   Cond (TExp Bool ELitTrue) stmt -> stmtCode stmt
   Cond (TExp Bool ELitFalse) stmt -> return ()
@@ -199,7 +199,7 @@ stmtCode stmt =
                             putLabel  l
   CondElse (TExp Bool ELitTrue) s _ -> stmtCode s
   CondElse (TExp Bool ELitFalse) _ s-> stmtCode s
-  CondElse expr s0 s1 ->  if returns [s0] && returns [s1] 
+  CondElse expr s0 s1 ->  if returns [s0] && returns [s1]
                             then do l1 <-     getLabel
                                     exprCode  expr
                                     ifeq      l1
@@ -230,9 +230,9 @@ stmtCode stmt =
                                            Doub -> dpop
                                            Bool -> ipop
                                            Void -> return ()
-  ArrAss id e0 e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
-  ArrAss id e0 e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
-
+  ArrAss id [EDimen e0] e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
+--  ArrAss id e0 e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
+  ArrAss id [EDimen e0] e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
   For t' i0 i1 s -> do modify (\s -> s {vars = ([]:vars s)})
                        l1 <- getLabel
                        l2 <- getLabel
@@ -243,7 +243,7 @@ stmtCode stmt =
 
                        -- get the array
                        ar <- lookupId i1
-                       
+
                        -- create a count variable and init to 0
                        addVar Int (Ident "___counter___")
                        count <- lookupId (Ident "___counter___")
@@ -257,7 +257,7 @@ stmtCode stmt =
                        arraylength
 
                        if_icmpge   l2 -- jump to l2 if we are done
-                       
+
                        -- load the current value
                        aload ar
                        iload count
@@ -277,7 +277,7 @@ stmtCode stmt =
 
                        -- increment
                        iinc count
-                       
+
                        -- jump
                        goto l1
 
@@ -286,7 +286,6 @@ stmtCode stmt =
 
                        -- exit the scope
                        modify (\s -> s {vars = tail (vars s)})
-
 --------------------------------------------------------------------------------
 
 
@@ -297,14 +296,14 @@ stmtCode stmt =
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) =
  case e of
-  EVar id      -> lookupId id >>=  case t of Int     -> iload;  Doub   -> dload; 
-                                             Bool    -> iload;  ArrInt -> aload; 
-                                             ArrDoub -> aload;
+  EVar id      -> lookupId id >>=  case t of Int     -> iload;  Doub   -> dload;
+                                             Bool    -> iload;  ArrInt _ -> aload;
+                                             ArrDoub _ -> aload;
   ELitInt i    -> bipush i
   ELitDoub d   -> dpush d
   ELitTrue     -> bipush 1
   ELitFalse    -> bipush 0
-  EApp (Ident "printString") [TExp _ (EString s)] -> spush s  >> 
+  EApp (Ident "printString") [TExp _ (EString s)] -> spush s  >>
                                                     incStack (-1) >> sprint
   EApp (Ident "printInt") es    -> mapM_ exprCode es >> mapM_ popExpr es >> iprint
   EApp (Ident "printDouble") es -> mapM_ exprCode es >> mapM_ popExpr es >> dprint
@@ -322,7 +321,7 @@ exprCode (TExp t e) =
                                exprCode exp
                                ifeq     l1
                                bipush   1
-                               goto l2
+                               goto     l2
                                putLabel l1
                                bipush   0
                                putLabel l2
@@ -339,17 +338,17 @@ exprCode (TExp t e) =
                                putLabel l2
                     Bool -> exprCode exp >> bipush 1 >> ixor
   EMul e0 o e1 -> exprCode e0 >> exprCode e1 >>
-                  case t of Int  -> case o of 
+                  case t of Int  -> case o of
                                       Div   -> idiv
                                       Mod   -> imod
                                       Times -> imul
-                            Doub -> case o of 
+                            Doub -> case o of
                                       Div   -> ddiv
                                       Mod   -> dmod
                                       Times -> dmul
   EAdd e0 o e1 -> do exprCode e0
                      exprCode e1
-                     case t of 
+                     case t of
                        Int  -> case o of
                                  Plus  -> iadd
                                  Minus -> isub
@@ -360,7 +359,7 @@ exprCode (TExp t e) =
                                  l2 <- getLabel
                                  exprCode e0
                                  exprCode e1
-                                 if t' == Doub 
+                                 if t' == Doub
                                   then dcmpg >>
                                        case o of
                                          LTH -> iflt l1
@@ -387,7 +386,7 @@ exprCode (TExp t e) =
                      bipush    0
                      exprCode  e0
                      if_icmpeq l1 -- e0 == false
-                     bipush    0 
+                     bipush    0
                      exprCode  e1
                      if_icmpeq l1  -- e1 == false
                      goto      l2  -- e0 && e1 == true
@@ -410,22 +409,23 @@ exprCode (TExp t e) =
                      putLabel  l1  -- true
                      bipush    1
                      putLabel  l2
-  EArr    t  e -> case t of
+  EArr    t  [EDimen e] -> case t of
                     Int  -> exprCode e >> newarray "int"
                     Doub -> exprCode e >> newarray "double"
   EArrLen id   -> (lookupId id >>= aload) >> arraylength
-  EArrIdx id e -> do lookupId id >>= aload
-                     exprCode e
-                     case t of
-                       Doub -> daload
-                       Int  -> iaload
+  EArrIdx id [EDimen e] -> do lookupId id >>= aload
+                              exprCode e
+                              case t of
+                                Doub -> daload
+                                Int  -> iaload
+exprCode e = trace (show e) (return ())
 --------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 -- Jasmin Instructions
 --------------------------------------------------------------------------------
-anull        = putCode ["\taconst_null"] >> incStack 1
+anull       = putCode ["\taconst_null"] >> incStack 1
 aret        = putCode ["\tareturn"] >> incStack (-1)
 aload     n = putCode ["\taload " ++ (show n)] >> incStack 1
 iastore     = putCode ["\tiastore"] >> incStack (-3)
@@ -483,16 +483,16 @@ iread       = putCode ["\tinvokestatic Runtime/readInt()I"]    >> incStack 1
 dprint      = putCode ["\tinvokestatic Runtime/printDouble(D)V"] -- >> incStack (-2)
 dread       = putCode ["\tinvokestatic Runtime/readDouble()D"] >> incStack 2
 sprint      = putCode ["\tinvokestatic Runtime/printString(Ljava/lang/String;)V"]
-invokestatic t id es = 
+invokestatic t id es =
     do s <- get
        putCode ["\tinvokestatic " ++ className s ++ "/" ++ id ++
                 "(" ++ concat (map exprToChar es) ++ ")" ++ typeToChar t]
-       case t of Void -> return ()
-                 Int  -> incStack 1
-                 Bool -> incStack 1
-                 Doub -> incStack 2
-                 ArrInt -> incStack 1
-                 ArrDoub -> incStack 1
+       case t of Void    -> return ()
+                 Int     -> incStack 1
+                 Bool    -> incStack 1
+                 Doub    -> incStack 2
+                 ArrInt _ -> incStack 1
+                 ArrDoub _-> incStack 1
 putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
 
@@ -502,7 +502,17 @@ putLabel l  = putCode [l++":"]
 --------------------------------------------------------------------------------
 -- | converts a Type to it's Char representation.
 typeToChar :: Type -> String
-typeToChar t = fromJust $ lookup t [(Int,"I"),(Doub,"D"),(Void,"V"),(Bool,"I"),(ArrInt,"[I"),(ArrDoub,"[D")]
+typeToChar t = case t of
+                 Int  -> "I"
+                 Doub -> "D"
+                 Void -> "V"
+                 Bool -> "I"
+                 ArrInt ds  -> (take (length ds) (repeat '['))++"I"
+                 ArrDoub ds -> (take (length ds) (repeat '['))++"D"
+                         
+
+
+--fromJust $ lookup t [(Int,"I"),(Doub,"D"),(Void,"V"),(Bool,"I"),(ArrInt,"[I"),(ArrDoub,"[D")]
 
 -- | Convert an expression to the Char representation of it's type.
 exprToChar :: Expr -> String
@@ -513,7 +523,7 @@ popExpr (TExp _ (EString _)) = incStack (-1)
 popExpr (TExp t _) = case t of Int  -> incStack (-1)
                                Doub -> incStack (-2)
                                Bool -> incStack (-1)
-                               ArrInt -> incStack (-1)
-                               ArrDoub -> incStack (-1)
+                               ArrInt _ -> incStack (-1)
+                               ArrDoub _ -> incStack (-1)
                                Void -> return ()
 --------------------------------------------------------------------------------
