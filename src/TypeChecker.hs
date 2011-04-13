@@ -51,11 +51,9 @@ addVars :: Type -> [Item] -> Env -> Env
 addVars t is (e:es) = (foldr (:) e (zip (map f is) (repeat t))):es
     where f (NoInit id) = id
           f (Init id _) = id
---          f (ArrInit id t e) = id
 
 
 checkTopDef :: TopDef -> State TopDef
---checkTopDef (FnDef Void id args (Block [])) = return (FnDef Void id args (Block [VRet]))
 checkTopDef (FnDef t id args (Block b)) = 
   local (\x -> map (\(Arg t i) -> (i,t)) args : x) (typeStmt b t) >>= (\ss -> return $ FnDef t id args 
                                                                            (Block (if t == Void then ss++[VRet] else ss)))
@@ -85,9 +83,12 @@ typeStmt (While e s':s)       rt = do e' <- inferBool e
                                       typeStmt s rt >>= return . (:) (While e' s'')
 typeStmt (Ass id e:s)         rt = do (TExp t e') <- typeExpr e
                                       t' <- typeIdent id
-                                      if t == t'
-                                        then typeStmt s rt >>= return . (:) (Ass id (TExp t e'))
-                                        else fail $ "Expression " ++ show e ++ " has the wrong type"
+                                      case t' of
+                                        ArrInt  _ -> typeStmt (ArrAss id [] e:s) rt
+                                        ArrDoub _ -> typeStmt (ArrAss id [] e:s) rt
+                                        _         -> if t == t'
+                                                      then typeStmt s rt >>= return . (:) (Ass id (TExp t e'))
+                                                      else fail $ "Expression " ++ show e ++ " has the wrong type " ++ show t
 typeStmt (Ret e:s)            rt = do local id (typeStmt s rt)
                                       (TExp t e') <- typeExpr e
                                       if t == rt
@@ -95,12 +96,69 @@ typeStmt (Ret e:s)            rt = do local id (typeStmt s rt)
                                         else fail $ show t ++ " is not of return type " ++ show rt
 typeStmt (VRet:s)             rt | rt == Void = typeStmt s rt >>= return . (:) VRet
                                  | otherwise  = fail $ "Return type not " ++ show rt
-typeStmt (ArrAss id eidx expr:s) rt = do e0@(TExp t0 _) <- typeExpr eidx
-                                         e1@(TExp t1 _) <- typeExpr expr
-                                         t' <- typeIdent id
-                                         if t0 == Int && (case t' of ArrInt -> Int; ArrDoub -> Doub) == t1
-                                            then typeStmt s rt >>= return . (:) (ArrAss id e0 e1)
-                                            else fail "invalid assignment to array element"
+
+
+typeStmt (ArrAss id ds0 expr0:s) rt=do t0   <- typeIdent id
+                                       case t0 of
+                                        ArrInt  ds -> f t0 ds
+                                        ArrDoub ds -> f t0 ds
+                                        _          -> fail "cannot do array assignment of non-array types."
+  where f t0 ds = do ds0' <- mapM checkDimen ds0
+                     expr0'@(TExp t1 expr1) <- typeExpr expr0
+                     if length ds == length ds0
+                       then if t1 == Int || t1 == Doub
+                              then typeStmt s rt >>= return . (:) (ArrAss id ds0' expr0')
+                              else fail "must assign int to element of int array "
+                       else case expr1 of
+                             (EArrIdx id1 ds1) -> do 
+                                    ds1' <- mapM checkDimen ds1
+                                    t1   <- typeIdent id1
+                                    case t1 of
+                                      ArrInt ds' -> if (length ds' - length ds1) ==
+                                                    (length ds  - length ds0)
+                                                     then typeStmt s rt >>= return . (:) (ArrAss id ds0' (EArrIdx id1 ds1'))
+                                                     else fail "array dimensions doesn't agree"
+                                      _          -> fail "can only assign array to an array..."
+                             e -> case t0 of
+                                    ArrInt _ -> case t1 of
+                                                  ArrInt _ -> typeStmt s rt >>= return . (:) (ArrAss id ds0' expr0')
+                                                  _        -> fail "cannot assign array-ref of different type"
+                                    ArrDoub _ -> case t1 of
+                                                   ArrDoub _ -> typeStmt s rt >>= return . (:) (ArrAss id ds0' expr0')
+                                                   _         -> fail "cannot assign array-ref of different type"
+                                    _         -> fail "cannot assign array-ref of different type"
+
+
+typeStmt (f@(For t i0 i1 _):ss) rt =local ((:)[(i0, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
+                                                                          return . (:) (For t i0 i1 s))
+    where typeFor :: Stmt -> State Stmt
+          typeFor (For t i0 i1 s) = do t' <- typeIdent i1
+                                       case t of 
+                                        Void -> fail "invalid type in for"
+                                        Bool -> fail "unsupported array type in for"
+                                        Int  -> oneDimenFor t t' s
+                                        Doub -> oneDimenFor t t' s
+                                        ArrInt  ds -> mulDimenFor t t' s
+                                        ArrDoub ds -> mulDimenFor t t' s
+          oneDimenFor t t' s = case t' of
+                                ArrInt  [e] -> if t == Int then do ss <- typeStmt [s] rt; return $ head ss
+                                                           else fail "elem type does not mach array type in for"
+                                ArrDoub [e] -> if t == Doub then do ss <- typeStmt [s] rt; return $ head ss 
+                                                            else fail "elem type does not mach array type in for"
+          mulDimenFor (ArrInt ds)  t' s = case t' of
+                                            ArrInt ds'  -> if (length ds == (length ds')-1)
+                                                            then do ss <- typeStmt [s] rt; return $ head ss
+                                                            else fail "array dimension error in for"
+                                            ArrDoub ds' -> fail "array types must agree in for"
+          mulDimenFor (ArrDoub ds) t' s = case t' of
+                                            ArrInt ds'  -> fail "array types must agree in for"
+                                            ArrDoub ds' -> if (length ds == (length ds')-1)
+                                                            then do ss <- typeStmt [s] rt; return $ head ss
+                                                            else fail "array dimension error in for"
+                                          
+
+
+{-
 typeStmt (f@(For t i0 i1 _):ss) rt = local ((:)[(i0, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
                                                                           return . (:) (For t i0 i1 s))
    where typeFor :: Stmt -> State Stmt
@@ -109,8 +167,11 @@ typeStmt (f@(For t i0 i1 _):ss) rt = local ((:)[(i0, t)]) (typeFor f) >>= (\s ->
                                         ArrInt  -> do ss <- typeStmt [s] rt ;return $ head ss
                                         ArrDoub -> do ss <- typeStmt [s] rt ;return $ head ss
                                         _       -> fail "element and array must be of same type in for-stmt"
+-}
 
--- Takes an expression and returns a type-annotated expression
+
+
+-- |Takes an expression and returns a type-annotated expression
 typeExpr :: Expr -> State Expr
 typeExpr (EVar id)         = typeIdent id >>= (\t -> return $ TExp t (EVar id))
 typeExpr e@(ELitInt _)     = return $ TExp Int  e
@@ -136,26 +197,47 @@ typeExpr e@(EApp id args)  = do argTs <- mapM typeExpr args
                                                  then return (TExp t (EApp id argTs))
                                                  else fail $ show id ++ " gets wrong arguments"
                                   _          -> fail $ show id ++ " does not exist"
+typeExpr e@(EArrMDLen id ds) = do t <- typeIdent id
+                                  ds' <- mapM checkDimen ds
+                                  case t of
+                                    ArrInt  d -> if length ds < length d then  return $ TExp Int (EArrMDLen id ds') 
+                                                                         else fail msg
+                                    ArrDoub d -> if length ds < length d then return $ TExp Int (EArrMDLen id ds')
+                                                                         else fail msg
+                                    _          -> fail ".length operator must be applied to array type"
+       where msg = ".length must be applied to argument of type array"
 typeExpr e@(EArrLen id)   = do t <- typeIdent id
-                               if (t /= ArrInt && t /= ArrDoub)
-                                then fail ".length operator must be applied to array type"
-                                else return $ TExp Int e
-typeExpr e@(EArr t expr) = do e@(TExp t' e') <- typeExpr expr
-                              e'' <- typeExpr e'
+                               case t of
+                                 ArrInt  ds -> return $ TExp Int e
+                                 ArrDoub ds -> return $ TExp Int e
+                                 _          -> fail ".length operator must be applied to array type"
+typeExpr e@(EArr t dim)  = do dim' <- mapM checkDimen dim
+--                              e'' <- typeExpr e'
                               case t of 
-                                Int  -> return $ TExp ArrInt  (EArr t e)
-                                Doub -> return $ TExp ArrDoub (EArr t e)
+                                Int  -> return $ TExp (ArrInt (arrDimen dim))  (EArr t dim)
+                                Doub -> return $ TExp (ArrDoub (arrDimen dim)) (EArr t dim)
                                 _    -> fail "invalid array type"
-typeExpr e@(EArrIdx id expr) = do idxE@(TExp t _) <- typeExpr expr
-                                  if t == Int  
-                                    then do t <- typeIdent id
-                                            if (t /= ArrInt && t /= ArrDoub)
-                                             then fail "can only index on arrays"
-                                             else case t of
-                                                   ArrInt  -> return $ TExp Int  (EArrIdx id idxE)
-                                                   ArrDoub -> return $ TExp Doub (EArrIdx id idxE)
-                                    else fail "array index must be of type int"
+typeExpr e@(EArrIdx id ds) = do ds' <- mapM checkDimen ds
+                                t   <- typeIdent id
+                                case t of
+                                  ArrInt  ds0 -> if length ds == length ds0 
+                                                   then return $ TExp  Int (EArrIdx id ds')
+                                                   else return $ TExp (ArrInt (take (length ds - length ds0) (repeat ArrItem))) (EArrIdx id ds')
+                                  ArrDoub ds0 -> if length ds == length ds0
+                                                   then return $ TExp Doub (EArrIdx id ds')
+                                                   else return $ TExp (ArrDoub (take (length ds - length ds0) (repeat ArrItem))) (EArrIdx id ds')
+                                  _           -> fail "cannot index non-array type"
+typeExpr (TExp t e) = return (TExp t e)
 
+                           
+arrDimen :: [a] -> [ArrItem]
+arrDimen xs = take (length xs) (repeat ArrItem)
+
+checkDimen :: ArrDimen -> State ArrDimen
+checkDimen (EDimen expr) = do (TExp t e) <- typeExpr expr
+                              if t == Int
+                                 then return (EDimen (TExp t e))
+                                 else fail "checkDimen: array index must be of type int"
 
 
 typeIdent :: Ident -> State Type

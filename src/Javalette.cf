@@ -30,7 +30,7 @@ Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
-ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr ";" ;
+ArrAss.    Stmt ::= Ident [ArrDimen] "=" Expr ";" ;
 
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
 
@@ -62,9 +62,13 @@ Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
 
-ArrInt.    Type ::= "int" "[]";
+ArrInt.    Type ::= "int"    [ArrItem];
 
-ArrDoub.   Type ::= "double" "[]";
+ArrDoub.   Type ::= "double" [ArrItem];
+
+ArrItem.  ArrItem ::= "[]";
+
+separator nonempty ArrItem "";
 
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
@@ -74,13 +78,18 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-EArr.      Expr6 ::= "new" Type "[" Expr "]";
+EArr.      Expr6 ::= "new" Type [ArrDimen];
+
+EDimen. ArrDimen ::= "[" Expr "]";
+separator nonempty ArrDimen "";
 
 EVar.      Expr6 ::= Ident ;
 
-EArrIdx.   Expr6 ::= Ident "[" Expr "]";
+EArrIdx.   Expr6 ::= Ident [ArrDimen];
 
 EArrLen.   Expr6 ::= Ident "." "length";
+
+EArrMDLen. Expr6 ::= Ident [ArrDimen] "." "length";
 
 ELitInt.   Expr6 ::= Integer ;
 
