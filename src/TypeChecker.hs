@@ -116,7 +116,7 @@ typeStmt (ArrAss id ds0 expr0:s) rt=do t0   <- typeIdent id
                                     case t1 of
                                       ArrInt ds' -> if (length ds' - length ds1) ==
                                                     (length ds  - length ds0)
-                                                     then typeStmt s rt >>= return . (:) (ArrAss id ds0' (EArrIdx id1 ds1'))
+                                                     then typeStmt s rt >>= return . (:) (ArrAss id ds0' (TExp (ArrInt (arrDimen ds1')) (EArrIdx id1 ds1')))
                                                      else fail "array dimensions doesn't agree"
                                       _          -> fail "can only assign array to an array..."
                              e -> case t0 of
@@ -155,20 +155,6 @@ typeStmt (f@(For t i0 i1 _):ss) rt =local ((:)[(i0, t)]) (typeFor f) >>= (\s -> 
                                             ArrDoub ds' -> if (length ds == (length ds')-1)
                                                             then do ss <- typeStmt [s] rt; return $ head ss
                                                             else fail "array dimension error in for"
-                                          
-
-
-{-
-typeStmt (f@(For t i0 i1 _):ss) rt = local ((:)[(i0, t)]) (typeFor f) >>= (\s -> typeStmt ss rt >>=
-                                                                          return . (:) (For t i0 i1 s))
-   where typeFor :: Stmt -> State Stmt
-         typeFor (For t i0 i1 s) = do t' <- typeIdent i1
-                                      case t' of
-                                        ArrInt  -> do ss <- typeStmt [s] rt ;return $ head ss
-                                        ArrDoub -> do ss <- typeStmt [s] rt ;return $ head ss
-                                        _       -> fail "element and array must be of same type in for-stmt"
--}
-
 
 
 -- |Takes an expression and returns a type-annotated expression

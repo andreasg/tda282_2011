@@ -1,11 +1,11 @@
-all: runtime bnfc compiler
+all: runtime bnfc jlc
 
 bnfc:
 	bnfc -haskell Javalette.cf
 	happy -gca ParJavalette.y
 	alex -g LexJavalette.x
 
-compiler:
+jlc:
 	ghc --make Jl.hs -o ../jlc
 
 runtime:

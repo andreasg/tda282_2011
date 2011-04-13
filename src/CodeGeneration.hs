@@ -4,7 +4,7 @@ import AbsJavalette
 import PrintJavalette
 import ErrM
 import Debug.Trace
-import Data.List (nubBy)
+import Data.List (nubBy, init, last)
 import Data.Maybe (fromJust)
 import Control.Monad.State
 
@@ -167,9 +167,9 @@ stmtCode stmt =
                                           Doub -> do i <- lookupId id
                                                      dstore i
                                                      stmtCode (Decl t is')
-                                          ArrInt _ -> do i <- lookupId id
-                                                         astore i
-                                                         stmtCode (Decl t is')
+                                          ArrInt _  -> do i <- lookupId id
+                                                          astore i
+                                                          stmtCode (Decl t is')
                                           ArrDoub _ -> do i <- lookupId id
                                                           astore i
                                                           stmtCode (Decl t is')
@@ -231,8 +231,34 @@ stmtCode stmt =
                                            Bool -> ipop
                                            Void -> return ()
   ArrAss id [EDimen e0] e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
---  ArrAss id e0 e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
   ArrAss id [EDimen e0] e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
+
+--  ArrAss id [] e@(TExp t _) -> do i <- lookupId id
+--                                  aload i
+
+                                  
+                                           
+                                  
+                                           
+  ArrAss id ds e@(TExp t _) -> do i <- lookupId id 
+                                  aload i 
+  
+                                  if (length ds > 0)
+                                     then do mapM_ (\(EDimen e) -> exprCode e >> aaload) (tail ds) --arr
+                                             (\(EDimen e) -> exprCode e) (last ds) -- idx
+                                     else putCode[""]
+                                  exprCode e -- val
+
+
+                                  case t of
+                                   Int   -> iastore
+                                   Doub  -> dastore
+                                   (ArrInt _) ->  ipop >> astore i
+                                   (ArrDoub _) -> dpop >> astore i
+  ArrAss id ds e -> trace (show stmt) (return ())
+                             
+
+
   For t' i0 i1 s -> do modify (\s -> s {vars = ([]:vars s)})
                        l1 <- getLabel
                        l2 <- getLabel
@@ -412,12 +438,31 @@ exprCode (TExp t e) =
   EArr    t  [EDimen e] -> case t of
                     Int  -> exprCode e >> newarray "int"
                     Doub -> exprCode e >> newarray "double"
+  EArr    t'  ds -> do mapM_ (\(EDimen e) -> exprCode e) ds
+                       multianewarray (typeArr t) (length ds)
+     where typeArr (ArrInt ds)  = (take (length ds) (repeat '[')) ++ "I"
+           typeArr (ArrDoub ds) = (take (length ds) (repeat '[')) ++ "D"
   EArrLen id   -> (lookupId id >>= aload) >> arraylength
+  EArrMDLen id ds -> do i <- lookupId id
+                        aload i
+                        mapM_ (\(EDimen e) -> exprCode e >> aaload) ds
+                        arraylength
   EArrIdx id [EDimen e] -> do lookupId id >>= aload
                               exprCode e
                               case t of
                                 Doub -> daload
                                 Int  -> iaload
+                                (ArrInt _)  -> aaload
+                                (ArrDoub _) -> aaload                                
+  EArrIdx id ds -> do lookupId id >>= aload
+                      mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds)
+                      (\(EDimen e) -> exprCode e) (last ds)
+                      case t of
+                        Int  -> iaload
+                        Doub -> daload
+                        (ArrInt _)  -> aaload
+                        (ArrDoub _) -> aaload
+                      
 exprCode e = trace (show e) (return ())
 --------------------------------------------------------------------------------
 
@@ -427,6 +472,8 @@ exprCode e = trace (show e) (return ())
 --------------------------------------------------------------------------------
 anull       = putCode ["\taconst_null"] >> incStack 1
 aret        = putCode ["\tareturn"] >> incStack (-1)
+aaload      = putCode ["\taaload"] >> incStack (-1)
+aastore     = putCode ["\taastore"] >> incStack (-3)
 aload     n = putCode ["\taload " ++ (show n)] >> incStack 1
 iastore     = putCode ["\tiastore"] >> incStack (-3)
 dastore     = putCode ["\tdastore"] >> incStack (-4)
@@ -434,6 +481,9 @@ astore    n = putCode ["\tastore " ++ (show n)] >> incStack (-1)
 daload      = putCode ["\tdaload"]
 iaload      = putCode ["\tiaload"] >> incStack (-1)
 newarray  a = putCode ["\tnewarray " ++ a]
+multianewarray t n = putCode["\tmultianewarray " ++ t ++ " " ++ show n] >> case head (reverse t) of
+                                                                             'D' -> incStack ((-n)*2+1)
+                                                                             'I' -> incStack ((-n)+1)
 arraylength = putCode ["\tarraylength"]
 iload  n    = putCode ["\tiload "  ++ (show n)] >> incStack 1
 istore n    = putCode ["\tistore " ++ (show n)] >> incStack (-1)
