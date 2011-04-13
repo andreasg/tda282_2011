@@ -1,8 +1,11 @@
-all:
+all: runtime
 	bnfc -haskell Javalette.cf
 	happy -gca ParJavalette.y
 	alex -g LexJavalette.x
 	ghc --make Jl.hs -o ../jlc
+runtime:
+	javac Runtime.java
+	mv Runtime.class ../lib/Runtime.class
 clean:
 	-rm -f *.log *.aux *.hi *.o *.dvi
 	-rm -f DocJavalette.ps
