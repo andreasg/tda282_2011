@@ -272,6 +272,8 @@ stmtCode stmt =
                        case t' of
                          Int  -> iaload >> istore elem
                          Doub -> daload >> dstore elem
+                         ArrInt _ -> aaload >> astore elem
+                         ArrDoub _ -> aaload >> astore elem
 
                        -- run the statemnt
                        stmtCode s
@@ -282,6 +284,8 @@ stmtCode stmt =
                        case t' of
                          Int  -> iload elem >> iastore
                          Doub -> dload elem >> dastore
+                         ArrInt _ -> aload elem >> aastore
+                         ArrDoub _ -> aload elem >> aastore
 
                        -- increment
                        iinc count
