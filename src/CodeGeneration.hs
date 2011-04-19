@@ -230,21 +230,56 @@ stmtCode stmt =
                                            Doub -> dpop
                                            Bool -> ipop
                                            Void -> return ()
-  ArrAss id [EDimen e0] e1@(TExp Int e')  -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> iastore
-  ArrAss id [EDimen e0] e1@(TExp Doub e') -> (lookupId id >>= aload) >> exprCode e0 >> exprCode e1 >> dastore
+
+{-
+  ArrAss id ds0 e@(TExp Int e') -> do lookupId id >>= aload
+                                      mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
+                                      (\(EDimen e) -> exprCode e) (last ds0)
+                                      exprCode e
+                                      iastore
+
+  ArrAss id ds0 e@(TExp Doub e') -> do lookupId id >>= aload
+                                       mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
+                                       (\(EDimen e) -> exprCode e) (last ds0)
+                                       exprCode e
+                                       dastore
+
+  ArrAss id ds0 e@(TExp (ArrInt ds1) e1)  -> do lookupId id >>= aload
+                                                mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
+                                                (\(EDimen e) -> exprCode e) (last ds0)
+                                                exprCode e
+                                                aastore -}
+
+
+  ArrAss id ds0 e@(TExp t _) -> do lookupId id >>= aload
+                                   mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
+                                   (\(EDimen e) -> exprCode e) (last ds0)
+                                   exprCode e
+                                   case t of
+                                     Int -> iastore
+                                     Doub -> dastore
+                                     ArrInt _ -> aastore
+                                     ArrDoub _ -> aastore
+
+
+
+
+
+--  trace "ARRINT"  (return ())
+--  ArrAss id ds0 e@(TExp (ArrDoub ds1) e1) -> trace "ARRDOUB" (return ())
 
 --  ArrAss id [] e@(TExp t _) -> do i <- lookupId id
 --                                  aload i
 
-                                  
-                                           
-                                  
-                                           
-  ArrAss id ds e@(TExp t _) -> do i <- lookupId id 
-                                  aload i 
-  
+
+
+
+{-
+  ArrAss id ds e@(TExp t _) -> do i <- lookupId id
+                                  aload i
+
                                   if (length ds > 0)
-                                     then do mapM_ (\(EDimen e) -> exprCode e >> aaload) (tail ds) --arr
+                                     then do mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds) --arr
                                              (\(EDimen e) -> exprCode e) (last ds) -- idx
                                      else putCode[""]
                                   exprCode e -- val
@@ -255,8 +290,8 @@ stmtCode stmt =
                                    Doub  -> dastore
                                    (ArrInt _) ->  ipop >> astore i
                                    (ArrDoub _) -> dpop >> astore i
-  ArrAss id ds e -> trace (show stmt) (return ())
-                             
+  ArrAss id ds e -> trace (show stmt) (return ()) -}
+
 
 
   For t' i0 i1 s -> do modify (\s -> s {vars = ([]:vars s)})
@@ -312,6 +347,7 @@ stmtCode stmt =
 
                        -- exit the scope
                        modify (\s -> s {vars = tail (vars s)})
+  s -> trace (show s) (return ())
 --------------------------------------------------------------------------------
 
 
@@ -453,7 +489,7 @@ exprCode (TExp t e) =
                                 Doub -> daload
                                 Int  -> iaload
                                 (ArrInt _)  -> aaload
-                                (ArrDoub _) -> aaload                                
+                                (ArrDoub _) -> aaload
   EArrIdx id ds -> do lookupId id >>= aload
                       mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds)
                       (\(EDimen e) -> exprCode e) (last ds)
@@ -462,7 +498,7 @@ exprCode (TExp t e) =
                         Doub -> daload
                         (ArrInt _)  -> aaload
                         (ArrDoub _) -> aaload
-                      
+
 exprCode e = trace (show e) (return ())
 --------------------------------------------------------------------------------
 
@@ -559,7 +595,7 @@ typeToChar t = case t of
                  Bool -> "I"
                  ArrInt ds  -> (take (length ds) (repeat '['))++"I"
                  ArrDoub ds -> (take (length ds) (repeat '['))++"D"
-                         
+
 
 
 --fromJust $ lookup t [(Int,"I"),(Doub,"D"),(Void,"V"),(Bool,"I"),(ArrInt,"[I"),(ArrDoub,"[D")]
