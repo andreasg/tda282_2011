@@ -231,26 +231,6 @@ stmtCode stmt =
                                            Bool -> ipop
                                            Void -> return ()
 
-{-
-  ArrAss id ds0 e@(TExp Int e') -> do lookupId id >>= aload
-                                      mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
-                                      (\(EDimen e) -> exprCode e) (last ds0)
-                                      exprCode e
-                                      iastore
-
-  ArrAss id ds0 e@(TExp Doub e') -> do lookupId id >>= aload
-                                       mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
-                                       (\(EDimen e) -> exprCode e) (last ds0)
-                                       exprCode e
-                                       dastore
-
-  ArrAss id ds0 e@(TExp (ArrInt ds1) e1)  -> do lookupId id >>= aload
-                                                mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
-                                                (\(EDimen e) -> exprCode e) (last ds0)
-                                                exprCode e
-                                                aastore -}
-
-
   ArrAss id ds0 e@(TExp t _) -> do lookupId id >>= aload
                                    mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds0)
                                    (\(EDimen e) -> exprCode e) (last ds0)
@@ -260,39 +240,6 @@ stmtCode stmt =
                                      Doub -> dastore
                                      ArrInt _ -> aastore
                                      ArrDoub _ -> aastore
-
-
-
-
-
---  trace "ARRINT"  (return ())
---  ArrAss id ds0 e@(TExp (ArrDoub ds1) e1) -> trace "ARRDOUB" (return ())
-
---  ArrAss id [] e@(TExp t _) -> do i <- lookupId id
---                                  aload i
-
-
-
-
-{-
-  ArrAss id ds e@(TExp t _) -> do i <- lookupId id
-                                  aload i
-
-                                  if (length ds > 0)
-                                     then do mapM_ (\(EDimen e) -> exprCode e >> aaload) (init ds) --arr
-                                             (\(EDimen e) -> exprCode e) (last ds) -- idx
-                                     else putCode[""]
-                                  exprCode e -- val
-
-
-                                  case t of
-                                   Int   -> iastore
-                                   Doub  -> dastore
-                                   (ArrInt _) ->  ipop >> astore i
-                                   (ArrDoub _) -> dpop >> astore i
-  ArrAss id ds e -> trace (show stmt) (return ()) -}
-
-
 
   For t' i0 i1 s -> do modify (\s -> s {vars = ([]:vars s)})
                        l1 <- getLabel
@@ -347,7 +294,6 @@ stmtCode stmt =
 
                        -- exit the scope
                        modify (\s -> s {vars = tail (vars s)})
-  s -> trace (show s) (return ())
 --------------------------------------------------------------------------------
 
 
