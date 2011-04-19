@@ -1,0 +1,71 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[latin1]{inputenc}
+\usepackage{url}
+\usepackage[all]{xy}
+\usepackage{amsmath}
+\usepackage{listings}
+\lstset{language=C}
+
+\title{{\sc Compiler Construction}\\ TDA282 \\ Submission A}
+
+\author{Andreas Granstr\"om, 870208-8512 \\ \url{andgra@student.chalmers.se} \and Viktor Almqvist, YYMMDD-XXXX \\ \url{almqvisv@student.chalmers.se}}
+\begin{document}
+\maketitle
+
+
+\section{About}
+For Submission A we have implemented not only the single dimension
+array extension, but also the multi-dimensional array (MDA)
+extension. We are aware that this will not give extra credit, but it
+felt natural to add the functionallity since we added support for MDA
+in the typechecker in preperation for Submission B. It was then a
+small task to add support for MDA to the code generation.
+
+\section{Usage}
+\texttt{jlc <source file>} \\ This will produce a java class file
+(extension \texttt{.class}) and a jasmin source file (extension
+\texttt{.j}) in the same directory as the supplied source file.
+
+\subsection{Options}
+One can pass the \texttt{-t} option to the compliler (ex. \texttt{jlc
+  -t <source file>}), this will print (to standard output) the
+type-annotated abstract syntaxt-tree that the typechecker pass to the
+code-generator. This is mostly used for debugging purpuses. Note, this
+will not comiple the source file.
+
+\subsection{Building}
+To bulild the compiler, run \texttt{make} in the \texttt{src} directory, it will then produce the \texttt{jlc} binary in the directory ``above''.
+
+The available targets are
+\begin{description}
+\item[all] Build everything.
+\item[jlc] Only build the compiler (not the parser-part).
+\item[runtime] Compile the Runtime class.
+\item[bnfc] Only build parser-related stuff (Happy and Alex files).
+\item[clean] Remove binaries etc.
+\item[distclean] Remove all intermediate files, including Happy and Alex files.
+
+\end{description}
+
+
+\section{The Javalette Language}
+After running \texttt{make} in the \texttt{src} dir, view the
+\texttt{DocJavalette.txt} file (or build the \texttt{DocJavalette.tex}
+file with \LaTeX) for documentation of the language.
+
+\section{Parser issues}
+\subsection{shift/reduce}
+We have one shift/reduce error in our parser. It is the ``dangling else''
+problem, i.e., we have an ambiguity in our grammar. 
+
+Example:
+\begin{lstlisting}
+  if (A) if (B) ; else;
+\end{lstlisting}
+
+As our language is specified, it is ambigious if the \texttt{else}
+belongs to \texttt{if (A)} or \texttt{if (B)}.
+
+
+\end{document}

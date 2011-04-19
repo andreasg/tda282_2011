@@ -161,11 +161,11 @@ stmtCode stmt =
                           (Init id expr:is') ->
                              do exprCode expr
                                 addVar t id
-                                case t of Int  -> do i <- lookupId id
-                                                     istore i
+                                case t of Int  -> do lookupId id >>= istore
                                                      stmtCode (Decl t is')
-                                          Doub -> do i <- lookupId id
-                                                     dstore i
+                                          Doub -> do lookupId id >>= dstore 
+                                                     stmtCode (Decl t is')
+                                          Bool -> do lookupId id >>= istore
                                                      stmtCode (Decl t is')
                                           ArrInt _  -> do i <- lookupId id
                                                           astore i

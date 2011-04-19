@@ -18,25 +18,40 @@ import CodeGeneration
 
 -- driver
 
-check :: String -> String -> IO ()
-check n s = case pProgram (myLexer s) of
-             Bad err  -> do ePutStrLn "ERROR"
-                            putStrLn err
-                            exitFailure 
-             Ok  tree -> case typecheck tree of
-                           Bad err -> do ePutStrLn "ERROR"
-                                         putStrLn err
-                                         exitFailure 
-                           Ok p    -> do ePutStrLn "OK"
-                                         let name = (dropExtensions . takeFileName) n
-                                         let dir  = case takeDirectory n of
+-- |just typecheck and print the type-annotated ABS
+check :: String -> IO ()
+check  s =  putStrLn "Running typechecker only.\n\n" >>
+            case pProgram (myLexer s) of
+               Bad err  -> do putStrLn "ERROR"
+                              putStrLn err
+                              exitFailure 
+               Ok  tree -> case typecheck tree of
+                            Bad err -> do putStrLn "ERROR"
+                                          putStrLn err
+                                          exitFailure 
+                            Ok p    -> do putStrLn "OK"
+                                          putStrLn (show p)
+
+-- | Compile the file
+compile :: String -> String -> IO ()
+compile n s = case pProgram (myLexer s) of
+               Bad err  -> do ePutStrLn "ERROR"
+                              putStrLn err
+                              exitFailure 
+               Ok  tree -> case typecheck tree of
+                            Bad err -> do ePutStrLn "ERROR"
+                                          putStrLn err
+                                          exitFailure 
+                            Ok p    -> do ePutStrLn "OK"
+                                          let name = (dropExtensions . takeFileName) n
+                                          let dir  = case takeDirectory n of
                                                       "" -> "."
                                                       d  -> d
-                                         let code = genCode p name
-                                         writeFile (dir ++ "/" ++ name++".j") code
-                                         j <- jasmin
-                                         runCommand $ "java -jar " ++ j ++ " -d " ++ dir ++ " " ++ (dir++"/"++name++".j")
-                                         return ()
+                                          let code = genCode p name
+                                          writeFile (dir ++ "/" ++ name++".j") code
+                                          j <- jasmin
+                                          runCommand $ "java -jar " ++ j ++ " -d " ++ dir ++ " " ++ (dir++"/"++name++".j")
+                                          return ()
                                                 where
                                                   jasmin :: IO String
                                                   jasmin = do d <- getCurrentDirectory
@@ -44,15 +59,17 @@ check n s = case pProgram (myLexer s) of
                                                               return $ if b0 then "lib/jasmin.jar" else "jasmin.jar"
 
 
-  where ePutStrLn = hPutStrLn stderr
+ePutStrLn = hPutStrLn stderr
                                          
-
---putStrLn (genCode p ((dropExtensions . takeFileName) n))
-
 
 main :: IO ()
 main = do args <- getArgs
           case args of
-            [file] -> readFile file >>= check file
-            _      -> do putStrLn "Usage: Jl <SourceFile>"
+            [file]     -> readFile file >>= compile file
+            [cmd,file] -> case cmd of
+                            "-t" -> readFile file >>= check
+                            _    -> putStrLn "invalid option"
+            _      -> do putStrLn $ "Usage: Jl <SourceFile>\n" ++
+                                    "or     Jl -t <SourceFile> for a\n" ++
+                                    "type-annotated ABS."
                          exitFailure
