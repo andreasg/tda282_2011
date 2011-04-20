@@ -46,7 +46,7 @@ header = "target datalayout = " ++ show datalayout
 
 genCode :: Program -> String
 genCode p = let (_,e) = runEnv p
-            in unlines (header : code e)
+            in unlines (header : (reverse $ code e))
 
 runEnv :: Program -> ((),Env)
 runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
@@ -56,20 +56,26 @@ runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
 -- State modifiers
 --------------------------------------------------------------------------------
 addVar :: Type -> Ident -> Result ()
-addVar t (Ident id) = putCode ["%"++ id ++ " = alloca " ++ llvmType t]
+addVar t (Ident id) = instruction ["%"++ id ++ " = alloca " ++ llvmType t]
 
 -- |Add code to the scope
 putCode :: [String] -> Result ()
-putCode ss = modify (\s -> s {code = (code s ++ ss)})
+putCode s = modify (\e -> e {code = ((head $ code e)++(concat s)) : (drop 1 $ code e)})
+
+newInstruction :: Result ()
+newInstruction = modify (\s -> s {code = []:code s})
+
+instruction :: [String] -> Result ()
+instruction s = newInstruction >> putCode s
 --------------------------------------------------------------------------------
 
 
 topdefCode :: TopDef -> Result ()
 topdefCode (FnDef t (Ident id) args (Block bs)) = 
  do
-  putCode ["define " ++ llvmType t ++ " @" ++ id ++ "(" ++ {- ARGS -} ") {"]
+  instruction ["define " ++ llvmType t ++ " @" ++ id ++ "(" ++ {- ARGS -} ") {"]
   mapM_ stmtCode bs
-  putCode ["}"]
+  instruction ["}"]
                      
 
 --------------------------------------------------------------------------------
@@ -78,17 +84,18 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
 -- | Generate LLVM code for a Javalette Statement
 stmtCode :: Stmt -> Result ()
 stmtCode stmt = case stmt of
-  Empty                             -> undefined
-  (BStmt (Block ss))                -> undefined
+  Empty                             -> return ()
+  (BStmt (Block ss))                -> do modify (\s -> s {vars = ([]:vars s)})
+                                          mapM_ stmtCode ss
+                                          modify (\s -> s {vars = tail (vars s)})
   Decl t is                         -> case is of
                                          [] -> return ()
-                                         (NoInit id:is') -> addVar t id >> alloca t
+                                         (NoInit id:is') -> addVar t id
                                          _               -> undefined
   Ass id e@(TExp t e')              -> undefined
   Incr id                           -> undefined
   Decr id                           -> undefined
-  Ret e@(TExp t _)                  -> exprCode e >> modify (\e -> e {code = init (code e) ++
-                                                                             ["ret " ++ last (code e)]})
+  Ret e                             -> ret e
   VRet                              -> vret
   Cond (TExp Bool ELitTrue)    s    -> stmtCode s
   Cond (TExp Bool ELitFalse)   _    -> return ()
@@ -135,8 +142,9 @@ exprCode (TExp t e) = case e of
 -- LLVM Instructions.
 --------------------------------------------------------------------------------
 
-alloca t = putCode ["alloca " ++ llvmType t]
-vret     = putCode ["ret void"]
+alloca t = instruction ["alloca " ++ llvmType t]
+vret     = instruction ["ret void"]
+ret    e = newInstruction >> putCode ["ret "] >> exprCode e
 --------------------------------------------------------------------------------
 
 
@@ -144,7 +152,7 @@ vret     = putCode ["ret void"]
 -- Utils.
 --------------------------------------------------------------------------------
 llvmType :: Type -> String
-llvmType Int = "i32"
-llvmType Doub = "d32"
+llvmType Int  = "i32"
+llvmType Doub = "double"
 llvmType Void = "void"
-llvmType _ = undefined
+llvmType _    = undefined
