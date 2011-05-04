@@ -39,17 +39,20 @@ emptyEnv = Env 0 [] [] [] []
 --------------------------------------------------------------------------------
 datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32"++
              ":32-f64:32:64-v64:64:64-v128:128:128-a0:0:64-f80:32:32-n8:16:32"
-
-header = "target datalayout = " ++ show datalayout 
+header = "target datalayout = " ++ show datalayout ++ "\n"
 --------------------------------------------------------------------------------
 
 
+--------------------------------------------------------------------------------
+-- Run Functions
+--------------------------------------------------------------------------------
 genCode :: Program -> String
 genCode p = let (_,e) = runEnv p
-            in unlines (header : (reverse $ code e))
+            in  unlines (header : (reverse $ code e))
 
 runEnv :: Program -> ((),Env)
 runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
+--------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
@@ -58,7 +61,7 @@ runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
 addVar :: Type -> Ident -> Result ()
 addVar t (Ident id) = instruction ["%"++ id ++ " = alloca " ++ llvmType t]
 
--- |Add code to the scope
+-- | Add code to the scope
 putCode :: [String] -> Result ()
 putCode s = modify (\e -> e {code = ((head $ code e)++(concat s)) : (drop 1 $ code e)})
 
@@ -80,6 +83,17 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
 
 --------------------------------------------------------------------------------
 -- Statement Code Generation.
+
+type Register = String
+
+load :: Ident -> Result Register
+load = undefined
+
+addi :: Register -> Integer -> Result Register
+addi = undefined
+
+storei :: Ident -> Register -> Result ()
+storei = undefined
 --------------------------------------------------------------------------------
 -- | Generate LLVM code for a Javalette Statement
 stmtCode :: Stmt -> Result ()
@@ -93,7 +107,9 @@ stmtCode stmt = case stmt of
                                          (NoInit id:is') -> addVar t id
                                          _               -> undefined
   Ass id e@(TExp t e')              -> undefined
-  Incr id                           -> undefined
+  Incr id                           -> do r1 <-load id
+                                          r2 <- addi r1 1
+                                          storei id r2
   Decr id                           -> undefined
   Ret e                             -> ret e
   VRet                              -> vret
@@ -117,7 +133,7 @@ exprCode :: Expr -> Result ()
 exprCode (TExp t e) = case e of
   EVar id      -> undefined
   ELitInt i    -> putCode ["i32 " ++ show i]
-  ELitDoub d   -> putCode ["d32 " ++ show d]
+  ELitDoub d   -> putCode ["double " ++ show d]
   ELitTrue     -> putCode ["i32 1"]
   ELitFalse    -> putCode ["i32 0"]
   EApp id es   -> undefined
@@ -141,7 +157,6 @@ exprCode (TExp t e) = case e of
 --------------------------------------------------------------------------------
 -- LLVM Instructions.
 --------------------------------------------------------------------------------
-
 alloca t = instruction ["alloca " ++ llvmType t]
 vret     = instruction ["ret void"]
 ret    e = newInstruction >> putCode ["ret "] >> exprCode e
@@ -156,3 +171,4 @@ llvmType Int  = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType _    = undefined
+--------------------------------------------------------------------------------
