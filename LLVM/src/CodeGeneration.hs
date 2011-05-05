@@ -19,6 +19,17 @@ import ReturnChecker
 --------------------------------------------------------------------------------
 -- Types and Data.
 --------------------------------------------------------------------------------
+data Value = VReg Type Register | VPtr Type Register | VInt Integer | VDoub Double
+instance Show Value where 
+    show (VReg t r) = llvmType t ++ " " ++  show r
+    show (VPtr t r) = llvmType t ++ "* " ++ show r
+    show (VInt i) = llvmType Int ++ " " ++ show i
+    show (VDoub d) = llvmType Doub ++ " " ++ show d
+data Register = Reg String
+instance Show Register where
+    show (Reg s) = "%"++s
+
+
 type Result = State Env
 
 -- | Environment used to keep track of all data during code-gen.
@@ -30,7 +41,7 @@ data Env = Env
   , code         :: [String]
   }
 emptyEnv :: Env
-emptyEnv = Env 0 [] [] [] []
+emptyEnv = Env 1 [] [] [] []
 --------------------------------------------------------------------------------
 
 
@@ -58,42 +69,35 @@ runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
 --------------------------------------------------------------------------------
 -- State modifiers
 --------------------------------------------------------------------------------
-addVar :: Type -> Ident -> Result ()
-addVar t (Ident id) = instruction ["%"++ id ++ " = alloca " ++ llvmType t]
-
 -- | Add code to the scope
 putCode :: [String] -> Result ()
-putCode s = modify (\e -> e {code = ((head $ code e)++(concat s)) : (drop 1 $ code e)})
+putCode s = modify $ \e -> e {code = (concat s) : (code e)}
 
-newInstruction :: Result ()
-newInstruction = modify (\s -> s {code = []:code s})
-
-instruction :: [String] -> Result ()
-instruction s = newInstruction >> putCode s
+newRegister :: Result Register
+newRegister = do e <- get
+                 modify $ \e -> e {nextRegister = nextRegister e + 1}
+                 return (Reg (show $ nextRegister e))
 --------------------------------------------------------------------------------
 
 
 topdefCode :: TopDef -> Result ()
 topdefCode (FnDef t (Ident id) args (Block bs)) = 
  do
-  instruction ["define " ++ llvmType t ++ " @" ++ id ++ "(" ++ {- ARGS -} ") {"]
+  putCode ["define " ++ llvmType t ++ " @" ++ id ++ "(" ++ {- ARGS -} ") {"]
   mapM_ stmtCode bs
-  instruction ["}"]
+  putCode ["}"]
                      
 
 --------------------------------------------------------------------------------
 -- Statement Code Generation.
 
-type Register = String
 
-load :: Ident -> Result Register
-load = undefined
+--load :: Ident -> Result Register
+--load = undefined
 
-addi :: Register -> Integer -> Result Register
-addi = undefined
+load dest ptr = putCode [show dest ++ " = load " ++ show ptr]
+store op ptr = putCode ["store " ++ show op ++ ", " ++ show ptr]
 
-storei :: Ident -> Register -> Result ()
-storei = undefined
 --------------------------------------------------------------------------------
 -- | Generate LLVM code for a Javalette Statement
 stmtCode :: Stmt -> Result ()
@@ -104,12 +108,19 @@ stmtCode stmt = case stmt of
                                           modify (\s -> s {vars = tail (vars s)})
   Decl t is                         -> case is of
                                          [] -> return ()
-                                         (NoInit id:is') -> addVar t id
-                                         _               -> undefined
-  Ass id e@(TExp t e')              -> undefined
-  Incr id                           -> do r1 <-load id
-                                          r2 <- addi r1 1
-                                          storei id r2
+                                         (NoInit (Ident id):is') -> alloca (Reg id) t
+                                         _                       -> undefined
+  Ass (Ident id) e@(TExp t e')      -> case e' of
+                                         ELitInt i  -> store  (VInt i) (VPtr Int (Reg id))
+                                         ELitDoub d -> store  (VDoub d) (VPtr Doub (Reg id))
+                                         ELitTrue   -> store  (VInt 1) (VPtr Int (Reg id))
+                                         ELitFalse  -> store  (VInt 0) (VPtr Int (Reg id))
+                                         _          -> undefined
+  Incr (Ident id)                   -> do r1 <- newRegister
+                                          r2 <- newRegister
+                                          load r1 (VPtr Int (Reg id))
+                                          add r2  (VInt 1) r1
+                                          store (VReg Int r2) (VPtr Int (Reg id))
   Decr id                           -> undefined
   Ret e                             -> ret e
   VRet                              -> vret
@@ -131,11 +142,11 @@ stmtCode stmt = case stmt of
 -- | Generate LLVM code for an expression
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) = case e of
-  EVar id      -> undefined
-  ELitInt i    -> putCode ["i32 " ++ show i]
-  ELitDoub d   -> putCode ["double " ++ show d]
-  ELitTrue     -> putCode ["i32 1"]
-  ELitFalse    -> putCode ["i32 0"]
+  EVar (Ident id) -> putCode [show $ VReg t (Reg id)]
+  ELitInt i    -> putCode [show $ VInt i] --putCode ["i32 " ++ show i]
+  ELitDoub d   -> putCode [show $ VDoub d]-- putCode ["double " ++ show d]
+  ELitTrue     -> putCode [show $ VInt 1]
+  ELitFalse    -> putCode [show $ VInt 0]
   EApp id es   -> undefined
   EString s    -> undefined
   Neg exp      -> undefined
@@ -157,9 +168,32 @@ exprCode (TExp t e) = case e of
 --------------------------------------------------------------------------------
 -- LLVM Instructions.
 --------------------------------------------------------------------------------
-alloca t = instruction ["alloca " ++ llvmType t]
-vret     = instruction ["ret void"]
-ret    e = newInstruction >> putCode ["ret "] >> exprCode e
+joinLines = modify $ \e -> e { code = ((concat $ (reverse $take 2 (code e))) : (drop 2 (code e)))}
+-- terminator instruction
+vret  = putCode ["ret void"]
+ret e@(TExp t _) =  putCode ["ret "] >> exprCode e >> joinLines
+
+-- | branch. Cond is a register, iftrue and iffalse are labels.
+br cond iftrue iffalse = putCode [ "br i1 "
+                                 , "%" ++ cond
+                                 , ", label %" ++ iftrue
+                                 , ", label %" ++ iffalse]
+unreachable = putCode ["unreachable"]
+
+
+-- binary operators
+add dest op1 op2 = putCode [ show dest ++ " = add "
+                           , show op1 ++ ", " ++ show op2]
+sub dest op1 op2 = putCode [ show dest ++ " = sub "
+                           , show op1 ++ ", " ++ show op2]
+
+
+-- other operations
+icmp dest cond t op1 op2 = putCode [ show dest ++ " = icmp " ++ cond ++ " " ++ llvmType t
+                                   , " " ++ show op1 ++ ", " ++ show op2]
+
+-- memory acces instructions
+alloca dest t = putCode [show dest ++ " = alloca " ++ llvmType t]
 --------------------------------------------------------------------------------
 
 
