@@ -19,18 +19,21 @@ import ReturnChecker
 --------------------------------------------------------------------------------
 -- Types and Data.
 --------------------------------------------------------------------------------
-data Value = VReg Type Register | VPtr Type Register | VInt Integer | VDoub Double | VBit Integer
+-- | An abstract representation of LLVM-values
+data Value = VReg Type Register | VPtr Type Register | VInt Integer 
+           | VDoub Double | VBit Integer
 instance Show Value where
     show (VReg t r) = llvmType t ++ " " ++  show r
     show (VPtr t r) = llvmType t ++ "* " ++ show r
-    show (VInt i) = llvmType Int ++ " " ++ show i
-    show (VDoub d) = llvmType Doub ++ " " ++ show d
-    show (VBit i) = "i1 " ++ show i
+    show (VInt i)   = llvmType Int ++ " " ++ show i
+    show (VDoub d)  = llvmType Doub ++ " " ++ show d
+    show (VBit i)   = "i1 " ++ show i
+
 data Register = Reg String
 instance Show Register where
     show (Reg s) = "%"++s
 
-
+-- | State type
 type Result = State Env
 
 -- | Environment used to keep track of all data during code-gen.
@@ -48,7 +51,7 @@ emptyEnv = Env 1 0 [] [] [] []
 
 
 --------------------------------------------------------------------------------
--- File header
+-- File header and runtime-function declarations
 --------------------------------------------------------------------------------
 datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32"++
              ":32-f64:32:64-v64:64:64-v128:128:128-a0:0:64-f80:32:32-n8:16:32"
@@ -85,6 +88,7 @@ getLabel = do e <- get
               modify (\e -> e {labelCount = labelCount e + 1})
               return ("L" ++ show (labelCount e))
 
+putLabel :: String -> Result ()
 putLabel l  = putCode [l++":"]
 
 newRegister :: Result Register
@@ -94,6 +98,9 @@ newRegister = do e <- get
 --------------------------------------------------------------------------------
 
 
+--------------------------------------------------------------------------------
+-- Top level code generation
+--------------------------------------------------------------------------------
 topdefCode :: TopDef -> Result ()
 topdefCode (FnDef t (Ident id) args (Block bs)) =
  do
@@ -101,36 +108,39 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
   mapM_ stmtCode bs
   putCode ["}"]
 
-  where f xs = drop 2 $ foldl (\a (Arg t (Ident id)) -> a ++ ", " ++ (llvmType t ++ " %" ++ id)) [] xs
+  where f xs = drop 2 $ foldl (\a (Arg t (Ident id)) -> a ++ ", " 
+                               ++ (llvmType t ++ " %" ++ id)) [] xs
+--------------------------------------------------------------------------------
 
 
 --------------------------------------------------------------------------------
 -- Statement Code Generation.
-
-
 --------------------------------------------------------------------------------
 -- | Generate LLVM code for a Javalette Statement
 stmtCode :: Stmt -> Result ()
 stmtCode stmt = case stmt of
   Empty                             -> return ()
-  (BStmt (Block ss))                -> do modify (\s -> s {vars = ([]:vars s)})
+  (BStmt (Block ss))                -> do modify (\s -> s{vars = ([]:vars s)})
                                           mapM_ stmtCode ss
-                                          modify (\s -> s {vars = tail (vars s)})
+                                          modify (\s-> s{vars = tail (vars s)})
   Decl t is                         -> case is of
-                                         [] -> return ()
-                                         (NoInit (Ident id):is') -> alloca (Reg id) t >> stmtCode (Decl t is')
-                                         (Init (Ident id) e:is') -> do alloca (Reg id) t
-                                                                       v <- exprCode e
-                                                                       store v (VPtr t (Reg id))
-                                                                       stmtCode (Decl t is')
+                                        [] -> return ()
+                                        (NoInit (Ident id):is') -> 
+                                           alloca (Reg id) t >> 
+                                           stmtCode (Decl t is')
+                                        (Init (Ident id) e:is') -> 
+                                               do alloca (Reg id) t
+                                                  v <- exprCode e
+                                                  store v (VPtr t (Reg id))
+                                                  stmtCode (Decl t is')
   Ass (Ident id) e@(TExp t e')      -> do r1 <- exprCode e
                                           store r1 (VPtr t (Reg id))
   Incr (Ident id)                   -> do r1 <- load (VPtr Int (Reg id))
-                                          r2 <- add (VInt 1)  r1
-                                          store r2 (VPtr Int (Reg id))
+                                          r2 <- add  (VInt 1)  r1
+                                          store r2   (VPtr Int (Reg id))
   Decr (Ident id)                   -> do r1 <- load (VPtr Int (Reg id))
-                                          r2 <- sub (VInt 1) r1
-                                          store r2 (VPtr Int (Reg id))
+                                          r2 <- sub  (VInt 1) r1
+                                          store r2   (VPtr Int (Reg id))
   Ret e                             -> ret e
   VRet                              -> vret
   Cond (TExp Bool ELitTrue)    s    -> stmtCode s
@@ -138,7 +148,7 @@ stmtCode stmt = case stmt of
   Cond expr stmt                    -> do true <- getLabel
                                           end <- getLabel
                                           v <- exprCode expr
-                                          b <- icmp "eq" v (VBit 1)
+                                          b <- cmp EQU v (VBit 1)
                                           br b true end
                                           putLabel true
                                           stmtCode stmt
@@ -150,7 +160,7 @@ stmtCode stmt = case stmt of
                                           false <- getLabel
                                           end <- getLabel
                                           v <- exprCode expr
-                                          comp <- icmp "eq" v (VBit 1)
+                                          comp <- cmp EQU v (VBit 1)
                                           br comp true false
                                           putLabel true
                                           stmtCode s0
@@ -160,7 +170,18 @@ stmtCode stmt = case stmt of
                                           goto end
                                           putLabel end
   SExp e@(TExp t e')                -> exprCode e >> return ()
-  While expr stmt                   -> undefined
+  While expr stmt                   -> do begin <- getLabel
+                                          loop <- getLabel
+                                          end  <- getLabel
+                                          goto begin
+                                          putLabel begin
+                                          v <- exprCode expr
+                                          comp <- cmp EQU v (VBit 1)
+                                          br comp loop end
+                                          putLabel loop
+                                          stmtCode stmt
+                                          goto begin
+                                          putLabel end
   For t id0 id1 s                   -> undefined
   ArrAss id ds0 e@(TExp t _)        -> undefined
 --------------------------------------------------------------------------------
@@ -182,29 +203,23 @@ exprCode (TExp t e) = case e of
                         v2 <- exprCode e1
                         case o of Plus  -> add v1 v2
                                   Minus -> sub v1 v2
-  EMul e0 op e1   -> undefined {-case op of
-                       Div   -> 
-                       Mod   -> 
-                       Times -> -}
-  ERel e0 o e1   -> do v1 <- exprCode e0
-                       v2 <- exprCode e1
-                       icmp op v1 v2
-    where op = case o of
-                 EQU -> "eq"
-                 NE  -> "ne"
-                 LTH -> "slt"
-                 GTH -> "sgt"
-                 LE  -> "ule"
-                 GE  -> "sge"
+  EMul e0 op e1   -> do v1 <- exprCode e0
+                        v2 <- exprCode e1
+                        case op of
+                          Div   -> div' v1 v2
+                          Mod   -> rem' v1 v2
+                          Times -> mul' v1 v2
+  ERel e0 op e1   -> do v1 <- exprCode e0
+                        v2 <- exprCode e1
+                        cmp op v1 v2
+  EString str     -> undefined
   EAnd e0 e1      -> undefined
   EOr  e0 e1      -> undefined
-
 {-
  | EArr Type [ArrDimen]
  | EArrIdx Ident [ArrDimen]
  | EArrLen Ident
  | EArrMDLen Ident [ArrDimen]
- | EString String
  | Neg Expr
  | Not Expr
 -}
@@ -227,41 +242,54 @@ goto :: String -> Result ()
 goto l = putCode ["br label %" ++ l]
 
 br :: Value -> String -> String -> Result ()
-br cond iftrue iffalse = putCode [ "br i1 "
-                                 , unValue cond
+br cond iftrue iffalse = putCode [ "br i1 " ++ unValue cond
                                  , ", label %" ++ iftrue
                                  , ", label %" ++ iffalse]
 
+binOp :: Value -> Value -> String -> Type -> Result Value
+binOp op1 op2 fun t = do r <- newRegister
+                         putCode [ show r ++ " = " ++ fun ++ " "
+                                 , show op1 ++ ", " ++ unValue op2]
+                         return (VReg t r)
+
 add :: Value -> Value -> Result Value
-add op1 op2 = do r <- newRegister
-                 putCode [ show r ++ " = " ++ op ++ " "
-                         , show op1 ++ ", " ++ unValue op2]
-                 return (VReg t r)
-          where t = if isInt op1 then Int else Doub
-                op = if isInt op1 then "add" else "fadd"
+add op1 op2 = binOp op1 op2 op t
+     where (op,t) = if isInt op1 then ("add",Int) else ("fadd", Doub)
 
 sub :: Value -> Value -> Result Value
-sub op1 op2 = do r <- newRegister
-                 putCode [ show r ++ " = " ++ op ++ " "
-                         , show op1 ++ ", " ++ unValue op2]
-                 return (VReg t r)
-          where t = if isInt op1 then Int else Doub
-                op = if isInt op1 then "sub" else "fsub"
+sub op1 op2 = binOp op1 op2 op t
+     where (op,t) = if isInt op1 then ("sub",Int) else ("fsub", Doub)
 
-icmp :: String -> Value -> Value -> Result Value
-icmp cond op1 op2 = do r <- newRegister
-                       putCode [ show r ++ " = icmp " ++ cond ++ " "
-                               , " " ++ show op1 ++ ", " ++ unValue op2]
-                       return (VReg Bool r)
+mul' :: Value -> Value -> Result Value
+mul' op1 op2 = binOp op1 op2 op t
+     where (op,t) = if isInt op1 then ("mul",Int) else ("fmul", Doub)
+
+div' :: Value -> Value -> Result Value
+div' op1 op2 =  binOp op1 op2 op t
+     where (op,t) = if isInt op1 then ("div",Int) else ("fdiv", Doub)
+
+rem' :: Value -> Value -> Result Value
+rem' op1 op2 = binOp op1 op2 op t
+     where (op,t) = if isInt op1 then ("rem",Int) else ("frem", Doub)
+
+cmp :: RelOp -> Value -> Value -> Result Value
+cmp op v1 v2 = do r <- newRegister
+                  putCode [ show r ++ " = " ++ f ++ " " ++ op' ++ " "
+                          , show v1 ++ ", " ++ unValue v2]
+                  return (VReg Bool r)
+    where (t,f) = if isInt v1 then (Int,"icmp") else (Doub,"fcmp")
+          op' = case op of EQU -> "eq";  NE  -> "ne";  LTH -> "slt"
+                           GTH -> "sgt"; LE  -> "ule"; GE  -> "sge"
 
 call :: Type -> Ident -> [Value] -> Result Value
+call Void (Ident id) vs = do putCode ["call void @" ++ id ++"("++f vs++")"]
+                             return (VInt 0)
+    where f xs = drop 2 $ foldl (\a x -> a ++ ", " ++ show x) [] xs                                     
 call t (Ident id) vs = do r <- newRegister
-                          putCode [ head r ++ "call " ++ llvmType t ++ " @" ++ id ++ "("
-                                  , f vs
-                                  , ")"]
+                          putCode [ show r ++ " = call " ++ llvmType t
+                                  , " @" ++ id ++ "(" ++f vs ++ ")"]
                           return (VReg t r)
-    where head r = if t == Void then "" else show r ++ " = "
-          f xs = drop 2 $ foldl (\a x -> a ++ ", " ++ show x) [] xs
+    where f xs = drop 2 $ foldl (\a x -> a ++ ", " ++ show x) [] xs
 
 alloca :: Register -> Type -> Result ()
 alloca dest t = putCode [show dest ++ " = alloca " ++ llvmType t]
@@ -287,20 +315,20 @@ llvmType Void = "void"
 llvmType Bool = "i1"
 llvmType _    = undefined
 
-
 -- | Get the string repr. of a Value without it's type.
 unValue :: Value -> String
 unValue (VPtr _ r) = show r
 unValue (VReg _ r) = show r
-unValue (VInt i) = show i
-unValue (VDoub d) = show d
-unValue (VBit i ) = show i
+unValue (VInt i)   = show i
+unValue (VDoub d)  = show d
+unValue (VBit i )  = show i
 
-
+-- | Determine if a LLVM value is of Integer type
 isInt :: Value -> Bool
-isInt (VReg Int _) = True
-isInt (VPtr _ _)   = False
-isInt (VInt _)     = True
-isInt (VDoub _)    = False
-isInt (VBit i)     = True
+isInt (VReg Int _)  = True
+isInt (VReg Bool _) = True
+isInt (VPtr _ _)    = False
+isInt (VInt _)      = True
+isInt (VDoub _)     = False
+isInt (VBit i)      = True
 --------------------------------------------------------------------------------
