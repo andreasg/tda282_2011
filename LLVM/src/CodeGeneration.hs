@@ -92,12 +92,6 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
 -- Statement Code Generation.
 
 
---load :: Ident -> Result Register
---load = undefined
-
-load dest ptr = putCode [show dest ++ " = load " ++ show ptr]
-store op ptr = putCode ["store " ++ show op ++ ", " ++ show ptr]
-
 --------------------------------------------------------------------------------
 -- | Generate LLVM code for a Javalette Statement
 stmtCode :: Stmt -> Result ()
@@ -110,17 +104,21 @@ stmtCode stmt = case stmt of
                                          [] -> return ()
                                          (NoInit (Ident id):is') -> alloca (Reg id) t
                                          _                       -> undefined
-  Ass (Ident id) e@(TExp t e')      -> case e' of
+  Ass (Ident id) e@(TExp t e')      -> do r1 <- valueExpr e
+                                          store r1 (VPtr t (Reg id))
+
+{-
+                                     case e' of
                                          ELitInt i  -> store  (VInt i) (VPtr Int (Reg id))
                                          ELitDoub d -> store  (VDoub d) (VPtr Doub (Reg id))
                                          ELitTrue   -> store  (VInt 1) (VPtr Int (Reg id))
                                          ELitFalse  -> store  (VInt 0) (VPtr Int (Reg id))
                                          _          -> undefined
+-}
   Incr (Ident id)                   -> do r1 <- newRegister
-                                          r2 <- newRegister
-                                          load r1 (VPtr Int (Reg id))
-                                          add r2  (VInt 1) r1
-                                          store (VReg Int r2) (VPtr Int (Reg id))
+                                          r1 <- load (VPtr Int (Reg id))
+                                          r2 <- add (VInt 1)  r1
+                                          store r2 (VPtr Int (Reg id))
   Decr id                           -> undefined
   Ret e                             -> ret e
   VRet                              -> vret
@@ -135,6 +133,18 @@ stmtCode stmt = case stmt of
   ArrAss id ds0 e@(TExp t _)        -> undefined
 --------------------------------------------------------------------------------
 
+int i = show $ VInt i
+double d = show $ VDoub d
+reg t r = show $ VReg t r 
+ptr t r = show $ VPtr t r
+
+unValue (VPtr _ r) = show r
+unValue (VReg _ r) = show r
+unValue (VInt i) = show i
+unValue (VDoub d) = show d
+
+
+
 
 --------------------------------------------------------------------------------
 -- Expression Code Generation.
@@ -142,11 +152,11 @@ stmtCode stmt = case stmt of
 -- | Generate LLVM code for an expression
 exprCode :: Expr -> Result ()
 exprCode (TExp t e) = case e of
-  EVar (Ident id) -> putCode [show $ VReg t (Reg id)]
-  ELitInt i    -> putCode [show $ VInt i] --putCode ["i32 " ++ show i]
-  ELitDoub d   -> putCode [show $ VDoub d]-- putCode ["double " ++ show d]
-  ELitTrue     -> putCode [show $ VInt 1]
-  ELitFalse    -> putCode [show $ VInt 0]
+  EVar (Ident id) -> putCode [reg t (Reg id)]
+  ELitInt i    -> putCode [int i]
+  ELitDoub d   -> putCode [double d]
+  ELitTrue     -> putCode [int 1]
+  ELitFalse    -> putCode [int 0]
   EApp id es   -> undefined
   EString s    -> undefined
   Neg exp      -> undefined
@@ -162,6 +172,30 @@ exprCode (TExp t e) = case e of
   EArrMDLen id ds          -> undefined
   EArrIdx id [EDimen e]    -> undefined
   EArrIdx id ds            -> undefined
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Store the result of an expression in a register.
+--------------------------------------------------------------------------------
+valueExpr :: Expr -> Result Value
+valueExpr (TExp t e) = case e of
+  EVar (Ident id) -> load (VPtr t (Reg id))
+  ELitInt i       -> return $ VInt i
+  ELitDoub d      -> return $ VDoub d
+  ELitTrue        -> return $ VInt 1
+  ELitFalse       -> return $ VInt 0
+  EApp id es      -> do vs <- mapM valueExpr es
+                        call t id vs
+                        return (VInt 1)
+
+
+                     
+  EAdd e0 o e1    -> do v1 <- valueExpr e0
+                        v2 <- valueExpr e1
+                        case o of Plus  -> add v1 v2
+                                  Minus -> sub v1 v2
+  _  -> undefined                     
 --------------------------------------------------------------------------------
 
 
@@ -182,18 +216,36 @@ unreachable = putCode ["unreachable"]
 
 
 -- binary operators
-add dest op1 op2 = putCode [ show dest ++ " = add "
-                           , show op1 ++ ", " ++ show op2]
-sub dest op1 op2 = putCode [ show dest ++ " = sub "
-                           , show op1 ++ ", " ++ show op2]
-
+add op1 op2 = do r <- newRegister
+                 putCode [ show r ++ " = add "
+                         , show op1 ++ ", " ++ unValue op2]
+                 return (VReg Int r)
+sub op1 op2 = do r <- newRegister
+                 putCode [ show r ++ " = sub "
+                         , show op1 ++ ", " ++ unValue op2]
+                 return (VReg Int r)
 
 -- other operations
-icmp dest cond t op1 op2 = putCode [ show dest ++ " = icmp " ++ cond ++ " " ++ llvmType t
-                                   , " " ++ show op1 ++ ", " ++ show op2]
+icmp cond t op1 op2 = do r <- newRegister 
+                         putCode [ show r ++ " = icmp " ++ cond ++ " " ++ llvmType t
+                                 , " " ++ show op1 ++ ", " ++ show op2]
+                         return r
 
--- memory acces instructions
+call t (Ident id) vs = do r <- newRegister
+                          putCode [ show r ++ " = call @" ++ id ++ "("
+                                  , f vs
+                                  , ")"]
+                          return r
+
+    where f []     = []
+          f (x:xs) = show x ++ ", " ++ f xs
+
+-- memory access instructions
 alloca dest t = putCode [show dest ++ " = alloca " ++ llvmType t]
+load ptr@(VPtr t _) = do r <- newRegister 
+                         putCode [show r ++ " = load " ++ show ptr]
+                         return (VReg t r)
+store op ptr  = putCode ["store "  ++ show op ++ ", " ++ show ptr]
 --------------------------------------------------------------------------------
 
 
