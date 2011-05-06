@@ -21,15 +21,17 @@ import ReturnChecker
 --------------------------------------------------------------------------------
 -- | An abstract representation of LLVM-values
 data Value = VReg Type Register | VPtr Type Register | VInt Integer 
-           | VDoub Double | VBit Integer
+           | VDoub Double       | VBit Integer | VString Int String
 instance Show Value where
     show (VReg t r) = llvmType t ++ " " ++  show r
     show (VPtr t r) = llvmType t ++ "* " ++ show r
     show (VInt i)   = llvmType Int ++ " " ++ show i
     show (VDoub d)  = llvmType Doub ++ " " ++ show d
     show (VBit i)   = "i1 " ++ show i
+    show (VString len s) = "i8* getelementptr inbounds ([" ++ show len ++ " x i8]* @."++s++", i32 0, i32 0)"
 
 data Register = Reg String
+    deriving Eq
 instance Show Register where
     show (Reg s) = "%"++s
 
@@ -40,8 +42,8 @@ type Result = State Env
 data Env = Env
   { nextRegister :: Int                -- next num for register/label gen
   , labelCount   :: Int                -- labels
-  , strings      :: [(Ident,String)]   -- global string literals
-  , vars         :: [[(Ident,String)]] -- variables
+  , strings      :: [String]   -- global string literals
+  , vars         :: [[(Ident,Register)]] -- variables
   , funs         :: [(Ident,Type)]     -- function types
   , code         :: [String]
   }
@@ -60,7 +62,7 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
          "declare void @printDouble(double)\n" ++
          "declare void @printString(i8*)\n" ++
          "declare i32 @readInt()\n" ++
-         "declare double @readDouble()\n\n"
+         "declare double @readDouble()\n\n" 
 --------------------------------------------------------------------------------
 
 
@@ -69,7 +71,7 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
 --------------------------------------------------------------------------------
 genCode :: Program -> String
 genCode p = let (_,e) = runEnv p
-            in  unlines (header : (reverse $ code e))
+            in  unlines (header : strings e ++ ["\n"] ++  (reverse $ code e))
 
 runEnv :: Program -> ((),Env)
 runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
@@ -79,6 +81,12 @@ runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
 --------------------------------------------------------------------------------
 -- State modifiers
 --------------------------------------------------------------------------------
+addString s = do e <- get
+                 let name = "str"++show ((length $ strings e)+1)
+                 let s' = "@."++name ++ " = private constant [" ++ show (1 + length s) ++ " x i8] c\"" ++ s ++ "\\00\""
+                 modify (\e -> e { strings = (s' : strings e) })
+                 return name
+
 -- | Add code to the scope
 putCode :: [String] -> Result ()
 putCode s = modify $ \e -> e {code = (concat s) : (code e)}
@@ -97,6 +105,18 @@ newRegister = do e <- get
                  return (Reg (show $ nextRegister e))
 --------------------------------------------------------------------------------
 
+addVar :: Type -> Ident -> Result ()
+addVar t id@(Ident n) = do r <- newRegister
+                           modify $ \e -> e { vars = (((id, r) : head (vars e)) : tail (vars e))}
+                           alloca r t
+                           store (VReg t (Reg n)) (VPtr t r)
+
+getVar :: Ident -> Type -> Result Value
+getVar id@(Ident n) t = do s <- get
+                           case dropWhile (==Nothing) (map (lookup id) (vars s)) of
+                            (Just r:_) -> return (VPtr t r)
+                            []             -> return (VPtr t (Reg n))
+
 
 --------------------------------------------------------------------------------
 -- Top level code generation
@@ -104,7 +124,12 @@ newRegister = do e <- get
 topdefCode :: TopDef -> Result ()
 topdefCode (FnDef t (Ident id) args (Block bs)) =
  do
+  modify $ \e -> e {nextRegister = 1, vars = []}
   putCode ["define " ++ llvmType t ++ " @" ++ id ++ "(" ++ f args ++ ") {"]
+
+  -- create regestires and allocate space for all the arguments, and then load them.
+  mapM_ (\(Arg t id) -> addVar t id) args
+
   mapM_ stmtCode bs
   putCode ["}"]
 
@@ -120,9 +145,10 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
 stmtCode :: Stmt -> Result ()
 stmtCode stmt = case stmt of
   Empty                             -> return ()
-  (BStmt (Block ss))                -> do modify (\s -> s{vars = ([]:vars s)})
+  (BStmt (Block ss))                -> do e <- get
+                                          modify $ \e' -> e' { vars = [] : vars e' }
                                           mapM_ stmtCode ss
-                                          modify (\s-> s{vars = tail (vars s)})
+                                          modify $ \e' -> e' {nextRegister = nextRegister e, vars = vars e}
   Decl t is                         -> case is of
                                         [] -> return ()
                                         (NoInit (Ident id):is') -> 
@@ -171,8 +197,8 @@ stmtCode stmt = case stmt of
                                           putLabel end
   SExp e@(TExp t e')                -> exprCode e >> return ()
   While expr stmt                   -> do begin <- getLabel
-                                          loop <- getLabel
-                                          end  <- getLabel
+                                          loop  <- getLabel
+                                          end   <- getLabel
                                           goto begin
                                           putLabel begin
                                           v <- exprCode expr
@@ -192,11 +218,12 @@ stmtCode stmt = case stmt of
 --------------------------------------------------------------------------------
 exprCode :: Expr -> Result Value
 exprCode (TExp t e) = case e of
-  EVar (Ident id) -> load (VPtr t (Reg id))
+  EVar id         -> do r <- getVar id t
+                        load r
   ELitInt i       -> return $ VInt i
   ELitDoub d      -> return $ VDoub d
-  ELitTrue        -> return $ VInt 1
-  ELitFalse       -> return $ VInt 0
+  ELitTrue        -> return $ VBit 1
+  ELitFalse       -> return $ VBit 0
   EApp id es      -> do vs <- mapM exprCode es
                         call t id vs
   EAdd e0 o e1    -> do v1 <- exprCode e0
@@ -212,16 +239,23 @@ exprCode (TExp t e) = case e of
   ERel e0 op e1   -> do v1 <- exprCode e0
                         v2 <- exprCode e1
                         cmp op v1 v2
-  EString str     -> undefined
-  EAnd e0 e1      -> undefined
-  EOr  e0 e1      -> undefined
+  EString str     -> do name <- addString str
+                        return (VString ((length str) + 1) name)
+  EAnd e0 e1      -> do v1 <- exprCode e0
+                        v2 <- exprCode e1
+                        and' v1 v2
+  EOr  e0 e1      -> do v1 <- exprCode e0
+                        v2 <- exprCode e1
+                        or' v1 v2
+  Neg e           -> do v <- exprCode e
+                        sub (VInt 0) v
+  Not e           -> do v <- exprCode e
+                        xor v (VBit 1)
 {-
  | EArr Type [ArrDimen]
  | EArrIdx Ident [ArrDimen]
  | EArrLen Ident
  | EArrMDLen Ident [ArrDimen]
- | Neg Expr
- | Not Expr
 -}
   _  -> undefined
 --------------------------------------------------------------------------------
@@ -301,6 +335,16 @@ load ptr@(VPtr t _) = do r <- newRegister
 
 store :: Value -> Value -> Result ()
 store op ptr  = putCode ["store "  ++ show op ++ ", " ++ show ptr]
+
+and' :: Value -> Value -> Result Value
+and' v0 v1 = binOp v0 v1 "and" Bool
+
+or' :: Value -> Value -> Result Value
+or' v0 v1 = binOp v0 v1 "or" Bool
+
+xor :: Value -> Value -> Result Value
+xor v0 v1 = binOp v0 v1 "xor" Bool
+
 --------------------------------------------------------------------------------
 
 
