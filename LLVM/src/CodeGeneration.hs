@@ -43,7 +43,7 @@ data Env = Env
   { nextRegister :: Int                -- next num for register/label gen
   , labelCount   :: Int                -- labels
   , strings      :: [String]   -- global string literals
-  , vars         :: [[(Ident,Register)]] -- variables
+  , vars         :: [[(Ident,(Type,Register))]] -- variables
   , funs         :: [(Ident,Type)]     -- function types
   , code         :: [String]
   }
@@ -108,20 +108,20 @@ putLabel l  = putCode [l++":"]
 newRegister :: Result Register
 newRegister = do e <- get
                  modify $ \e -> e {nextRegister = nextRegister e + 1}
-                 return (Reg (show $ nextRegister e))
+                 return (Reg ('v' : (show $ nextRegister e)))
 --------------------------------------------------------------------------------
 
-addVar :: Type -> Ident -> Result ()
+addVar :: Type -> Ident -> Result Value
 addVar t id@(Ident n) = do r <- newRegister
-                           modify $ \e -> e { vars = (((id, r) : head (vars e)) : tail (vars e))}
+                           modify $ \e -> e { vars = (((id, (t,r)) : head (vars e)) : tail (vars e))}
                            alloca r t
-                           store (VReg t (Reg n)) (VPtr t r)
+                           return (VPtr t r)
 
-getVar :: Ident -> Type -> Result Value
-getVar id@(Ident n) t = do s <- get
-                           case dropWhile (==Nothing) (map (lookup id) (vars s)) of
-                            (Just r:_) -> return (VPtr t r)
-                            []             -> return (VPtr t (Reg n))
+getVar :: Ident -> Result Value
+getVar id@(Ident n) = do s <- get
+                         case dropWhile (==Nothing) (map (lookup id) (vars s)) of
+                            (Just (t,r):_) -> return (VPtr t r)
+                            []             -> undefined --return (VPtr t (Reg n))
 
 
 --------------------------------------------------------------------------------
@@ -135,6 +135,9 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
 
   -- create regestires and allocate space for all the arguments, and then load them.
   mapM_ (\(Arg t id) -> addVar t id) args
+
+  mapM_ (\(Arg t (Ident id)) -> do var <- getVar (Ident id)
+                                   store (VReg t (Reg id)) var) args
 
   mapM_ stmtCode bs
   putCode ["}"]
@@ -156,22 +159,25 @@ stmtCode stmt = case stmt of
                                           modify $ \e' -> e' {vars = tail (vars e')}
   Decl t is                         -> case is of
                                         [] -> return ()
-                                        (NoInit (Ident id):is') -> 
-                                           alloca (Reg id) t >> 
+                                        (NoInit id:is') -> 
+                                           addVar t id >> 
                                            stmtCode (Decl t is')
-                                        (Init (Ident id) e:is') -> 
-                                               do alloca (Reg id) t
-                                                  v <- exprCode e
-                                                  store v (VPtr t (Reg id))
+                                        (Init id e:is') -> 
+                                               do v <- exprCode e 
+                                                  var <- addVar t id
+                                                  store v var
                                                   stmtCode (Decl t is')
-  Ass (Ident id) e@(TExp t e')      -> do r1 <- exprCode e
-                                          store r1 (VPtr t (Reg id))
-  Incr (Ident id)                   -> do r1 <- load (VPtr Int (Reg id))
+  Ass id e@(TExp t e')      -> do r1 <- exprCode e
+                                  var <- getVar id
+                                  store r1 var
+  Incr  id                          -> do var <- getVar id
+                                          r1 <- load var
                                           r2 <- add  (VInt 1)  r1
-                                          store r2   (VPtr Int (Reg id))
-  Decr (Ident id)                   -> do r1 <- load (VPtr Int (Reg id))
-                                          r2 <- sub  (VInt 1) r1
-                                          store r2   (VPtr Int (Reg id))
+                                          store r2   var --(VPtr Int (Reg id))
+  Decr id                           -> do var <- getVar id 
+                                          r1 <- load var
+                                          r2 <- sub r1 (VInt 1)
+                                          store r2 var
   Ret e                             -> ret e
   VRet                              -> vret
   Cond (TExp Bool ELitTrue)    s    -> stmtCode s
@@ -187,19 +193,29 @@ stmtCode stmt = case stmt of
                                           putLabel end
   CondElse (TExp Bool ELitTrue) s _ -> stmtCode s
   CondElse (TExp Bool ELitFalse) _ s-> stmtCode s
-  CondElse expr s0 s1               -> do true <- getLabel
-                                          false <- getLabel
-                                          end <- getLabel
-                                          v <- exprCode expr
-                                          comp <- cmp EQU v (VBit 1)
-                                          br comp true false
-                                          putLabel true
-                                          stmtCode s0
-                                          goto end
-                                          putLabel false
-                                          stmtCode s1
-                                          goto end
-                                          putLabel end
+  CondElse expr s0 s1               -> do if returns [s0] && returns [s1]
+                                           then do true <- getLabel
+                                                   false <- getLabel
+                                                   v    <- exprCode expr
+                                                   comp <- cmp EQU v (VBit 1)
+                                                   br comp true false
+                                                   putLabel true
+                                                   stmtCode s0
+                                                   putLabel false
+                                                   stmtCode s1
+                                           else do true <- getLabel
+                                                   false <- getLabel
+                                                   end <- getLabel
+                                                   v <- exprCode expr
+                                                   comp <- cmp EQU v (VBit 1)
+                                                   br comp true false
+                                                   putLabel true
+                                                   stmtCode s0
+                                                   goto end
+                                                   putLabel false
+                                                   stmtCode s1
+                                                   goto end
+                                                   putLabel end
   SExp e@(TExp t e')                -> exprCode e >> return ()
   While expr stmt                   -> do begin <- getLabel
                                           loop  <- getLabel
@@ -223,7 +239,7 @@ stmtCode stmt = case stmt of
 --------------------------------------------------------------------------------
 exprCode :: Expr -> Result Value
 exprCode (TExp t e) = case e of
-  EVar id         -> do r <- getVar id t
+  EVar id         -> do r <- getVar id
                         load r
   ELitInt i       -> return $ VInt i
   ELitDoub d      -> return $ VDoub d
