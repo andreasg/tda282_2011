@@ -49,6 +49,8 @@ compile n s = case pProgram (myLexer s) of
                                                       d  -> d
                                           let code = genCode p
                                           writeFile (dir ++ "/" ++ name++".ll") code
+                                          runCommand $ "llvm-as " ++ (dir ++ "/" ++ name++".ll")
+                                          runCommand $ "llvm-ld " ++ name++".bc" ++ " runtime.bc"
                                           return ()
 
 
