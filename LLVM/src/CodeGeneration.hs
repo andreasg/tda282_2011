@@ -22,6 +22,7 @@ import ReturnChecker
 -- | An abstract representation of LLVM-values
 data Value = VReg Type Register | VPtr Type Register | VInt Integer
            | VDoub Double       | VBit Integer | VString Int String
+           | VVec Register
 instance Show Value where
     show (VReg t r) = llvmType t ++ " " ++  show r
     show (VPtr t r) = llvmType t ++ "* " ++ show r
@@ -29,6 +30,15 @@ instance Show Value where
     show (VDoub d)  = llvmType Doub ++ " " ++ show d
     show (VBit i)   = "i1 " ++ show i
     show (VString len s) = "i8* getelementptr inbounds ([" ++ show (len+1) ++ " x i8]* @."++s++", i32 0, i32 0)"
+
+
+valueType (VReg t _) = llvmType t
+valueType (VPtr t _) = llvmType t ++ "*"
+valueType (VInt _)   = llvmType Int
+valueType (VDoub _)  = llvmType Doub
+valueType (VBit _)   = "i1"
+valueType (VString _ _) = "i8*"
+valueType (VVec _)     = "i8**"
 
 data Register = Reg String
     deriving Eq
@@ -69,7 +79,9 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
          "declare void @printString(i8*)\n" ++
          "declare i32 @readInt()\n" ++
          "declare i8* @calloc(i32, i32)\n" ++
-         "declare double @readDouble()\n\n"
+         "declare double @readDouble()\n\n" ++
+         "%struct.vector = type {i32, i8**}\n\n"
+                                           
 --------------------------------------------------------------------------------
 
 
@@ -424,7 +436,28 @@ calloc n size t = do r0 <- newRegister
                      putCode [show r0 ++ " = call i8* calloc("++ show n ++ ", " ++ show size ++ ")"]
                      putCode [show r1 ++ " = bitcast i8* " ++ show r0 ++ " to " ++ llvmType t]
                      return (VPtr t r1)
-                              
+
+setelem :: Value -> Value -> Value -> Type ->  Result ()
+setelem vector index elem t = do e <- newRegister
+                                 r0 <- newRegister
+                                 putCode [show e ++ " = bitcast " ++ show t ++ " to i8*"]
+                                 putCode [show r0 ++ " = getelementptr inbounds " ++ show vector ++ ", i32 0, i32 1"]
+                                 r1 <- load (VVec r0)
+                                 r2 <- newRegister
+                                 putCode [show r2 ++ " = getelementptr inbounds " ++ show  index]
+                                 store elem (VVec r2)
+                                 return ()
+
+getelem :: Value -> Value -> Type -> Result Value
+getelem vector index t = do r0 <- newRegister
+                            putCode [show r0 ++ " = getelementptr inbounds " ++ show vector ++ ", i32 0, i32 1"]
+                            r1 <- load (VVec r0)
+                            r2 <- newRegister
+                            putCode [show r2 ++ " = getelementptr inbounds " ++ show r1 ++ ", " ++ show index]
+                            r3 <- load (VVec r2)
+                            elem <- newRegister
+                            putCode [show elem ++ " = bitcast " ++ show r3 ++ " to " ++ llvmType t]
+                            return (VReg t elem)
 --------------------------------------------------------------------------------
 
 
@@ -437,6 +470,8 @@ llvmType Int  = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType Bool = "i1"
+llvmType (ArrInt _) = "i8*"
+llvmType (ArrDoub _) = "i8*"
 llvmType _    = undefined
 
 -- | Get the string repr. of a Value without it's type.

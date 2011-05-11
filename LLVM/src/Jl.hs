@@ -33,25 +33,27 @@ check  s =  putStrLn "Running typechecker only.\n\n" >>
                                           putStrLn (show p)
 
 -- | Compile the file
-compile :: String -> String -> IO ()
-compile n s = case pProgram (myLexer s) of
-               Bad err  -> do ePutStrLn "ERROR"
-                              putStrLn err
-                              exitFailure 
-               Ok  tree -> case typecheck tree of
-                            Bad err -> do ePutStrLn "ERROR"
-                                          putStrLn err
-                                          exitFailure 
-                            Ok p    -> do ePutStrLn "OK"
-                                          let name = (dropExtensions . takeFileName) n
-                                          let dir  = case takeDirectory n of
-                                                      "" -> "."
-                                                      d  -> d
-                                          let code = genCode p
-                                          writeFile (dir ++ "/" ++ name++".ll") code
-                                          runCommand $ "llvm-as " ++ (dir ++ "/" ++ name++".ll")
-                                          runCommand $ "llvm-ld " ++ name++".bc" ++ " runtime.bc"
-                                          return ()
+compile :: String -> Bool -> String -> IO ()
+compile n compile s = case pProgram (myLexer s) of
+                        Bad err  -> do ePutStrLn "ERROR"
+                                       putStrLn err
+                                       exitFailure 
+                        Ok  tree -> case typecheck tree of
+                                     Bad err -> do ePutStrLn "ERROR"
+                                                   putStrLn err
+                                                   exitFailure 
+                                     Ok p    -> do ePutStrLn "OK"
+                                                   let name = (dropExtensions . takeFileName) n
+                                                   let dir  = case takeDirectory n of
+                                                                "" -> "."
+                                                                d  -> d
+                                                   let code = genCode p
+                                                   writeFile (dir ++ "/" ++ name++".ll") code
+                                                   if compile 
+                                                     then do runCommand $ "llvm-as " ++ (dir ++ "/" ++ name++".ll")
+                                                             runCommand $ "llvm-ld " ++ name++".bc" ++ " runtime.bc"
+                                                             return ()
+                                                     else return ()
 
 
 ePutStrLn = hPutStrLn stderr
@@ -60,11 +62,15 @@ ePutStrLn = hPutStrLn stderr
 main :: IO ()
 main = do args <- getArgs
           case args of
-            [file]     -> readFile file >>= compile file
+            [file]     -> readFile file >>= compile file True
             [cmd,file] -> case cmd of
                             "-t" -> readFile file >>= check
+                            "-nc" -> readFile file >>= compile file False
+                            "--no-compile" -> readFile file >>= compile file False
                             _    -> putStrLn "invalid option"
-            _      -> do putStrLn $ "Usage: Jl <SourceFile>\n" ++
-                                    "or     Jl -t <SourceFile> for a\n" ++
-                                    "type-annotated ABS."
+            _      -> do putStrLn $ "Usage: ./jlc <SourceFile> to compile sourcefile to binary.\n" ++
+                                    "       ./jlc -t <SourceFile> to print a type-annotated ABS to stdout.\n" ++
+                                    "       ./jlc -nc <SourceFile> to only output LLVM assembly file, without compiling\n" ++
+                                    "       ./jlc --no-compile <SourceFile> to only output LLVM assembly file, without compiling\n"
+
                          exitFailure
