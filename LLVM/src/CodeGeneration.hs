@@ -20,7 +20,7 @@ import ReturnChecker
 -- Types and Data.
 --------------------------------------------------------------------------------
 -- | An abstract representation of LLVM-values
-data Value = VReg Type Register | VPtr Type Register | VInt Integer 
+data Value = VReg Type Register | VPtr Type Register | VInt Integer
            | VDoub Double       | VBit Integer | VString Int String
 instance Show Value where
     show (VReg t r) = llvmType t ++ " " ++  show r
@@ -69,7 +69,7 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
          "declare void @printString(i8*)\n" ++
          "declare i32 @readInt()\n" ++
          "declare i8* @calloc(i32, i32)\n" ++
-         "declare double @readDouble()\n\n" 
+         "declare double @readDouble()\n\n"
 --------------------------------------------------------------------------------
 
 
@@ -146,7 +146,7 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
   mapM_ stmtCode bs
   putCode ["}"]
 
-  where f xs = drop 2 $ foldl (\a (Arg t (Ident id)) -> a ++ ", " 
+  where f xs = drop 2 $ foldl (\a (Arg t (Ident id)) -> a ++ ", "
                                ++ (llvmType t ++ " %" ++ id)) [] xs
 --------------------------------------------------------------------------------
 
@@ -166,8 +166,8 @@ stmtCode stmt = case stmt of
                                         (NoInit id:is') -> do (VPtr t r) <- addVar t id
                                                               alloca r t
                                                               stmtCode (Decl t is')
-                                        (Init id e:is') -> 
-                                               do v <- exprCode e 
+                                        (Init id e:is') ->
+                                               do v <- exprCode e
                                                   var@(VPtr t r) <- addVar t id
                                                   alloca r t
                                                   store v var
@@ -179,7 +179,7 @@ stmtCode stmt = case stmt of
                                           r1 <- load var
                                           r2 <- add  (VInt 1)  r1
                                           store r2   var --(VPtr Int (Reg id))
-  Decr id                           -> do var <- getVar id 
+  Decr id                           -> do var <- getVar id
                                           r1 <- load var
                                           r2 <- sub r1 (VInt 1)
                                           store r2 var
@@ -273,27 +273,27 @@ exprCode (TExp t e) = case e of
                         true1 <- getLabel
                         false <- getLabel
                         end   <- getLabel
-                     
+
                         r <- newRegister
                         alloca r Bool
-                  
+
                         v0 <- exprCode e0
                         x_cmp <- cmp EQU v0 (VBit 0)
                         br x_cmp false true0
-                     
+
                         putLabel false
                         store (VBit 0) (VPtr Bool r)
                         goto end
-                     
+
                         putLabel true0
                         v1 <- exprCode e1
                         y_cmp <- cmp EQU v1 (VBit 0)
                         br y_cmp false true1
-                        
+
                         putLabel true1
                         store (VBit 1) (VPtr Bool r)
                         goto end
-                     
+
                         putLabel end
                         load (VPtr Bool r)
   EOr  e0 e1      -> do true  <- getLabel
@@ -302,24 +302,24 @@ exprCode (TExp t e) = case e of
                         end   <- getLabel
                         r <- newRegister
                         alloca r Bool
-                                 
+
                         v0 <- exprCode e0
                         x_cmp <- cmp NE v0 (VBit 0)
                         br x_cmp true false0
-                      
+
                         putLabel false0 -- x == false
                         v1 <- exprCode e1
                         y_cmp <- cmp NE v1 (VBit 0)
                         br y_cmp true false1
-                      
+
                         putLabel true
                         store (VBit 1) (VPtr Bool r)
                         goto end
-                      
+
                         putLabel false1
                         store (VBit 0) (VPtr Bool r)
                         goto end
-                        
+
                         putLabel end
                         load (VPtr Bool r)
   Neg e           -> do v <- exprCode e
@@ -397,7 +397,7 @@ cmp op v1 v2 = do r <- newRegister
 call :: Type -> Ident -> [Value] -> Result Value
 call Void (Ident id) vs = do putCode ["call void @" ++ id ++"("++f vs++")"]
                              return (VInt 0)
-    where f xs = drop 2 $ foldl (\a x -> a ++ ", " ++ show x) [] xs                                     
+    where f xs = drop 2 $ foldl (\a x -> a ++ ", " ++ show x) [] xs
 call t (Ident id) vs = do r <- newRegister
                           putCode [ show r ++ " = call " ++ llvmType t
                                   , " @" ++ id ++ "(" ++f vs ++ ")"]
@@ -417,6 +417,14 @@ store op ptr  = putCode ["store "  ++ show op ++ ", " ++ show ptr]
 
 xor :: Value -> Value -> Result Value
 xor v0 v1 = binOp v0 v1 "xor" Bool
+
+calloc :: Value -> Value -> Type -> Result Value
+calloc n size t = do r0 <- newRegister
+                     r1 <- newRegister
+                     putCode [show r0 ++ " = call i8* calloc("++ show n ++ ", " ++ show size ++ ")"]
+                     putCode [show r1 ++ " = bitcast i8* " ++ show r0 ++ " to " ++ llvmType t]
+                     return (VPtr t r1)
+                              
 --------------------------------------------------------------------------------
 
 
