@@ -20,7 +20,7 @@ import ReturnChecker
 -- Types and Data.
 --------------------------------------------------------------------------------
 -- | An abstract representation of LLVM-values
-data Value = VReg LLVMType Register | VPtr LLVMType Register | VInt Integer
+data Value = VReg LLVMType Register | VInt Integer
            | VDoub Double           | VBit Integer           | VString Int String
            | VVec Register          | VType String
 
@@ -32,20 +32,19 @@ instance Show LLVMType where
                Prim t -> llvmType t
                Ptr ts -> show ts ++ "*"
                I8     -> "i8"
-               Vector -> "%struct.vector"
+               Vector -> "%struct.vector*"
 
 instance Show Value where
     show (VReg t r) = show t ++ " " ++  show r
-    show (VPtr t r) = show t ++ "* " ++ show r
+--    show (VPtr t r) = show t ++ "* " ++ show r
     show (VInt i)   = show (Prim Int) ++ " " ++ show i
     show (VDoub d)  = show (Prim Doub) ++ " " ++ show d
     show (VBit i)   = "i1 " ++ show i
     show (VType s)  = s
     show (VString len s) = "i8* getelementptr inbounds ([" ++ show (len+1) ++ " x i8]* @."++s++", i32 0, i32 0)"
 
-
 valueType (VReg t _) = show t
-valueType (VPtr t _) = show t ++ "*"
+--valueType (VPtr t _) = show t ++ "*"
 valueType (VInt _)   = show (Prim Int)
 valueType (VDoub _)  = show (Prim Doub)
 valueType (VBit _)   = "i1"
@@ -94,15 +93,6 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
          "declare double @readDouble()\n\n" ++
          "%struct.vector = type {i32, i8**}\n\n"
 --------------------------------------------------------------------------------
-
---newvec :: Value -> Value -> Result Value
---newvec len t@(VType s) = do vec <- newRegister
---                            alloca vec (VType vector)
---                            r0 <- calloc 
---                            return (VReg Int r0)
-
-
---newvec len _ = undefined
 
 
 --------------------------------------------------------------------------------
@@ -153,13 +143,13 @@ newRegister = do e <- get
 addVar :: LLVMType -> Ident -> Result Value
 addVar t id@(Ident n) = do r <- newRegister
                            modify $ \e -> e { vars = (((id, (t,r)) : head (vars e)) : tail (vars e))}
-                           return (VPtr t r)
+                           return (VReg (Ptr t) r)
 
 -- | Retrieve a pointer to a variable.
 getVar :: Ident -> Result Value
 getVar id@(Ident n) = do s <- get
                          case dropWhile (==Nothing) (map (lookup id) (vars s)) of
-                            (Just (t,r):_) -> return (VPtr t r)
+                            (Just (t,r):_) -> return (VReg (Ptr t) r)
                             []             -> undefined --return (VPtr t (Reg n))
 --------------------------------------------------------------------------------
 
@@ -172,9 +162,9 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
  do
   modify $ \e -> e {nextRegister = 1, vars = [[]]}
   putCode ["define " ++ show (Prim t) ++ " @" ++ id ++ "(" ++ f args ++ ") {"]
-  mapM_ (\(Arg t (Ident id)) -> do var@(VPtr t r) <- addVar (Prim t) (Ident id)
-                                   alloca r t
-                                   store (VReg t (Reg id)) var) args
+  mapM_ (\(Arg t (Ident id)) -> do var@(VReg t' r) <- addVar (Prim t) (Ident id)
+                                   alloca r (Prim t)
+                                   store (VReg (Prim t) (Reg id)) var) args
   mapM_ stmtCode bs
   putCode ["}"]
 
@@ -195,13 +185,13 @@ stmtCode stmt = case stmt of
                                           modify $ \e' -> e' {vars = tail (vars e')}
   Decl t is                         -> case is of
                                         [] -> return ()
-                                        (NoInit id:is') -> do (VPtr t' r) <- addVar (Prim t) id
-                                                              alloca r t'
+                                        (NoInit id:is') -> do (VReg t' r) <- addVar (Prim t) id
+                                                              alloca r (Prim t)
                                                               stmtCode (Decl t is')
                                         (Init id e:is') ->
                                                do v <- exprCode e
-                                                  var@(VPtr t' r) <- addVar (Prim t) id
-                                                  alloca r t'
+                                                  var@(VReg t' r) <- addVar (Prim t) id
+                                                  alloca r (Prim t)
                                                   store v var
                                                   stmtCode (Decl t is')
   Ass id e@(TExp t e')      -> do r1 <- exprCode e
@@ -314,7 +304,7 @@ exprCode (TExp t e) = case e of
                         br x_cmp false true0
 
                         putLabel false
-                        store (VBit 0) (VPtr (Prim Bool) r)
+                        store (VBit 0) (VReg (Ptr (Prim Bool)) r)
                         goto end
 
                         putLabel true0
@@ -323,11 +313,11 @@ exprCode (TExp t e) = case e of
                         br y_cmp false true1
 
                         putLabel true1
-                        store (VBit 1) (VPtr (Prim Bool) r)
+                        store (VBit 1) (VReg (Ptr (Prim Bool)) r)
                         goto end
 
                         putLabel end
-                        load (VPtr (Prim Bool) r)
+                        load (VReg (Ptr (Prim Bool)) r)
   EOr  e0 e1      -> do true  <- getLabel
                         false0 <- getLabel
                         false1 <- getLabel
@@ -345,20 +335,25 @@ exprCode (TExp t e) = case e of
                         br y_cmp true false1
 
                         putLabel true
-                        store (VBit 1) (VPtr (Prim Bool) r)
+                        store (VBit 1) (VReg (Ptr (Prim Bool)) r)
                         goto end
 
                         putLabel false1
-                        store (VBit 0) (VPtr (Prim Bool) r)
+                        store (VBit 0) (VReg (Ptr (Prim Bool)) r)
                         goto end
 
                         putLabel end
-                        load (VPtr (Prim Bool) r)
+                        load (VReg (Ptr (Prim Bool)) r)
   Neg e           -> do v <- exprCode e
                         sub zero v
                         where zero = if t == Doub then VDoub 0.0 else VInt 0
   Not e           -> do v <- exprCode e
                         xor v (VBit 1)
+  EArr t [EDimen e] -> do len <- exprCode e
+                          newvec len (Prim t)
+  EArrLen id        -> getVar id >>= veclen
+                       
+                       
 {-
  | EArr Type [ArrDimen]
  | EArrIdx Ident [ArrDimen]
@@ -440,9 +435,9 @@ alloca :: Register -> LLVMType -> Result ()
 alloca dest t = putCode [show dest ++ " = alloca " ++ show t]
 
 load :: Value -> Result Value
-load ptr@(VPtr t _) = do r <- newRegister
-                         putCode [show r ++ " = load " ++ show ptr]
-                         return (VReg t r)
+load ptr@(VReg (Ptr t) _) = do r <- newRegister
+                               putCode [show r ++ " = load " ++ show ptr]
+                               return (VReg t r)
 
 store :: Value -> Value -> Result ()
 store op ptr  = putCode ["store "  ++ show op ++ ", " ++ show ptr]
@@ -450,19 +445,16 @@ store op ptr  = putCode ["store "  ++ show op ++ ", " ++ show ptr]
 xor :: Value -> Value -> Result Value
 xor v0 v1 = binOp v0 v1 "xor" (Prim Bool)
 
-calloc :: Value -> LLVMType  -> Result Value
+
+calloc :: Value -> Value  -> Result Value
 calloc n size = do r0 <- newRegister
-                   r1 <- newRegister
-                   putCode [show r0 ++ " = call i8* calloc("++ show n ++ ", " ++ show size ++ ")"]
-                   return (VPtr (Ptr I8) r1)
+                   putCode [show r0 ++ " = call i8* @calloc("++ show n ++ ", " ++ show size ++ ")"]
+                   return (VReg (Ptr I8) r0)
 
 bitcast :: Value -> LLVMType -> Result Value
 bitcast v t = do r <- newRegister
                  putCode [show r ++ " = bitcast " ++ show v ++ " to " ++ show t]
                  return (VReg t r)
-
-
---bitcast v _ = undefined
 
 setelem :: Value -> Value -> Value -> Type ->  Result ()
 setelem vector index elem t = do e <- newRegister
@@ -485,6 +477,33 @@ getelem vector index t = do r0 <- newRegister
                             elem <- newRegister
                             putCode [show elem ++ " = bitcast " ++ show r3 ++ " to " ++ show t]
                             return (VReg t elem)
+sizeof :: LLVMType -> Result Value
+sizeof t = do r0 <- newRegister
+              putCode [show r0 ++ " = getelementptr " ++ show (Ptr t) ++ " null, i32 1"]
+              r1 <- newRegister
+              putCode [show r1 ++ " = ptrtoint " ++ show (Ptr t) ++ " " ++ show r0 ++ " to i32"]
+              return (VReg (Prim Int) r1)
+
+newvec :: Value -> LLVMType -> Result Value
+newvec len t= do vec <- newRegister
+                 alloca vec Vector
+                 sz <- sizeof t
+                 r0 <- calloc len sz
+                 r1 <- bitcast r0 Vector
+                 store r1 (VReg (Ptr Vector) vec)
+                 v0 <- load (VReg (Ptr Vector) vec)
+                 r2 <- newRegister
+                 putCode [show r2 ++ " = getelementptr inbounds " ++ show v0 ++ ", i32 0, i32 0"]
+                 store len (VReg (Ptr (Prim Int)) r2)
+                 r3 <- load (VReg (Ptr Vector) vec)
+                 return r3
+
+veclen :: Value -> Result Value
+veclen vec = do l <- newRegister
+                vec0 <- load vec
+                putCode [show l ++ " = getelementptr inbounds " ++ show vec0 ++ ", i32 0, i32 0"]
+                len <- load (VReg (Ptr (Prim Int)) l)
+                return len
 --------------------------------------------------------------------------------
 
 
@@ -497,13 +516,12 @@ llvmType Int = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType Bool = "i1"
-llvmType (ArrInt _) = "i8*"
-llvmType (ArrDoub _) = "i8*"
+llvmType (ArrInt _) = "%struct.vector*"
+llvmType (ArrDoub _) = "%struct.vector*"
 llvmType _    = undefined
 
 -- | Get the string repr. of a Value without it's type.
 unValue :: Value -> String
-unValue (VPtr _ r) = show r
 unValue (VReg _ r) = show r
 unValue (VInt i)   = show i
 unValue (VDoub d)  = show d
@@ -513,8 +531,9 @@ unValue (VBit i )  = show i
 isInt :: Value -> Bool
 isInt (VReg (Prim Int) _)  = True
 isInt (VReg (Prim Bool) _) = True
-isInt (VReg _ _)    = False
-isInt (VPtr _ _)    = False
+isInt (VReg (Ptr (Prim Int))  _)  = True
+isInt (VReg (Ptr (Prim Bool)) _) = True
+isInt (VReg t _) = False
 isInt (VInt _)      = True
 isInt (VDoub _)     = False
 isInt (VBit i)      = True
