@@ -32,7 +32,7 @@ instance Show LLVMType where
                Prim t -> llvmType t
                Ptr ts -> show ts ++ "*"
                I8     -> "i8"
-               Vector -> "%struct.vector*"
+               Vector -> "%struct.vector"
 
 instance Show Value where
     show (VReg t r) = show t ++ " " ++  show r
@@ -483,7 +483,7 @@ sizeof t = do r0 <- newRegister
               r1 <- newRegister
               putCode [show r1 ++ " = ptrtoint " ++ show (Ptr t) ++ " " ++ show r0 ++ " to i32"]
               return (VReg (Prim Int) r1)
-
+{-
 newvec :: Value -> LLVMType -> Result Value
 newvec len t= do vec <- newRegister
                  alloca vec Vector
@@ -497,11 +497,25 @@ newvec len t= do vec <- newRegister
                  store len (VReg (Ptr (Prim Int)) r2)
                  r3 <- load (VReg (Ptr Vector) vec)
                  return r3
+-}
+newvec :: Value -> LLVMType -> Result Value
+newvec len t = do vec <- newRegister
+                  alloca vec Vector
+                  sz <- sizeof t
+                  xs0 <- calloc len sz
+                  xs1 <- bitcast xs0 (Ptr (Ptr I8))
+                  r0 <- newRegister
+                  putCode [show r0 ++ " = getelementptr inbounds " ++ show (VReg (Ptr Vector) vec) ++ ", i32 0, i32 1"]
+                  store xs1 (VReg (Ptr (Ptr (Ptr I8))) r0)
+                  r1 <- newRegister
+                  putCode [show r1 ++ " = getelementptr inbounds " ++ show (VReg (Ptr Vector) vec) ++ ", i32 0, i32 0"]
+                  store len (VReg (Ptr (Prim Int)) r1)
+                  v0 <- load (VReg (Ptr Vector) vec)
+                  return v0
 
 veclen :: Value -> Result Value
 veclen vec = do l <- newRegister
-                vec0 <- load vec
-                putCode [show l ++ " = getelementptr inbounds " ++ show vec0 ++ ", i32 0, i32 0"]
+                putCode [show l ++ " = getelementptr inbounds " ++ show vec ++ ", i32 0, i32 0"]
                 len <- load (VReg (Ptr (Prim Int)) l)
                 return len
 --------------------------------------------------------------------------------
@@ -516,8 +530,8 @@ llvmType Int = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType Bool = "i1"
-llvmType (ArrInt _) = "%struct.vector*"
-llvmType (ArrDoub _) = "%struct.vector*"
+llvmType (ArrInt _) = "%struct.vector"
+llvmType (ArrDoub _) = "%struct.vector"
 llvmType _    = undefined
 
 -- | Get the string repr. of a Value without it's type.
