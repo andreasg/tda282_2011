@@ -21,7 +21,7 @@ import ReturnChecker
 --------------------------------------------------------------------------------
 -- | An abstract representation of LLVM-values
 data Value = VReg LLVMType Register | VInt Integer
-           | VDoub Double           | VBit Integer           | VString Int String
+           | VDoub Double           | VBit Integer | VString Int String
 
 data LLVMType = Prim Type | Ptr LLVMType | Vector LLVMType | I8
               deriving (Eq)
@@ -38,8 +38,8 @@ instance Show Value where
     show (VInt i)   = show (Prim Int) ++ " " ++ show i
     show (VDoub d)  = show (Prim Doub) ++ " " ++ show d
     show (VBit i)   = "i1 " ++ show i
-    show (VString len s) = "i8* getelementptr inbounds ([" ++ show (len+1) ++ " x i8]* @."++s++", i32 0, i32 0)"
-
+    show (VString len s) = "i8* getelementptr inbounds ([" ++ show (len+1) ++ 
+                           " x i8]* @."++s++", i32 0, i32 0)"
 
 valueType (VReg t _) = t
 valueType (VInt _)   = Prim Int
@@ -71,7 +71,6 @@ emptyEnv = Env 1    -- register count
                [[]] -- vars
                []   -- functions
                []   -- code
-
 --------------------------------------------------------------------------------
 
 
@@ -111,7 +110,8 @@ runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
 -- | Add a string to the global scope.
 addString s = do e <- get
                  let name = "str"++show (length $ strings e)
-                 let s' = "@."++name ++ " = private constant [" ++ show (1 + length s) ++ " x i8] c\"" ++ s ++ "\\00\""
+                 let s' = "@."++name ++ " = private constant [" ++ 
+                          show (1 + length s) ++ " x i8] c\"" ++ s ++ "\\00\""
                  modify (\e -> e { strings = (s' : strings e) })
                  return name
 
@@ -137,9 +137,10 @@ newRegister = do e <- get
 
 -- | Register a new variable with the Environment.
 addVar :: LLVMType -> Ident -> Result Value
-addVar t id@(Ident n) = do r <- newRegister
-                           modify $ \e -> e { vars = (((id, (t,r)) : head (vars e)) : tail (vars e))}
-                           return (VReg (Ptr t) r)
+addVar t id@(Ident n) = 
+   do r <- newRegister
+      modify $ \e -> e { vars = (((id, (t,r)) : head (vars e)) : tail (vars e))}
+      return (VReg (Ptr t) r)
 
 -- | Retrieve a pointer to a variable.
 getVar :: Ident -> Result Value
@@ -276,7 +277,7 @@ stmtCode stmt = case stmt of
                                           putLabel start
 
                                           count <- load counter
-                                          comp <- cmp EQU count len
+                                          comp <- cmp LTH count len
                                           br comp loop end
 
                                           putLabel loop
@@ -284,11 +285,13 @@ stmtCode stmt = case stmt of
                                           idx <- load counter
 
                                           r <- getelem vector idx (Prim t)
+
                                           store r elem -- PROBLEM HERE
 
                                           stmtCode s
 
-                                          setelem vector idx elem (Prim t)
+                                          v <- load elem
+                                          setelem vector idx v (Prim t)
 
                                           r1 <- add (VInt 1) idx
                                           store r1 counter
