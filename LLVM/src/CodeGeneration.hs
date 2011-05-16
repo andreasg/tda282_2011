@@ -22,9 +22,8 @@ import ReturnChecker
 -- | An abstract representation of LLVM-values
 data Value = VReg LLVMType Register | VInt Integer
            | VDoub Double           | VBit Integer           | VString Int String
-           | VVec Register          | VType String
 
-data LLVMType = Prim Type | Ptr LLVMType | Vector | I8
+data LLVMType = Prim Type | Ptr LLVMType | Vector LLVMType | I8
               deriving (Eq)
 
 instance Show LLVMType where
@@ -32,24 +31,21 @@ instance Show LLVMType where
                Prim t -> llvmType t
                Ptr ts -> show ts ++ "*"
                I8     -> "i8"
-               Vector -> "%struct.vector"
+               Vector t -> "{i32, " ++ show t ++ "*}"
 
 instance Show Value where
     show (VReg t r) = show t ++ " " ++  show r
---    show (VPtr t r) = show t ++ "* " ++ show r
     show (VInt i)   = show (Prim Int) ++ " " ++ show i
     show (VDoub d)  = show (Prim Doub) ++ " " ++ show d
     show (VBit i)   = "i1 " ++ show i
-    show (VType s)  = s
     show (VString len s) = "i8* getelementptr inbounds ([" ++ show (len+1) ++ " x i8]* @."++s++", i32 0, i32 0)"
 
-valueType (VReg t _) = show t
---valueType (VPtr t _) = show t ++ "*"
-valueType (VInt _)   = show (Prim Int)
-valueType (VDoub _)  = show (Prim Doub)
-valueType (VBit _)   = "i1"
-valueType (VString _ _) = "i8*"
-valueType (VVec _)     = "i8**"
+
+valueType (VReg t _) = t
+valueType (VInt _)   = Prim Int
+valueType (VDoub _)  = Prim Doub
+--valueType (VBit _)   = "i1"
+--valueType (VString _ _) = "i8*"
 
 data Register = Reg String
     deriving Eq
@@ -90,8 +86,8 @@ header = "target datalayout = " ++ show datalayout ++ "\n" ++
          "declare void @printString(i8*)\n" ++
          "declare i32 @readInt()\n" ++
          "declare i8* @calloc(i32, i32)\n" ++
-         "declare double @readDouble()\n\n" ++
-         "%struct.vector = type {i32, i8**}\n\n"
+         "declare double @readDouble()\n\n"
+         
 --------------------------------------------------------------------------------
 
 
@@ -256,8 +252,15 @@ stmtCode stmt = case stmt of
                                           stmtCode stmt
                                           goto begin
                                           putLabel end
+  ArrAss id [EDimen d] e@(TExp t _) -> do val <- exprCode e
+                                          idx <- exprCode d
+                                          vec <- getVar id
+                                          setelem vec idx val (Prim t)
   For t id0 id1 s                   -> undefined
-  ArrAss id ds0 e@(TExp t _)        -> undefined
+                                                 
+--  ArrAss id ds0 e@(TExp t _)        -> do val <- exprCode e
+--                                          idx <- mapM_ (\(EDimen e) -> exprCode e) ds0
+                                          
 --------------------------------------------------------------------------------
 
 
@@ -352,12 +355,12 @@ exprCode (TExp t e) = case e of
   EArr t [EDimen e] -> do len <- exprCode e
                           newvec len (Prim t)
   EArrLen id        -> getVar id >>= veclen
-                       
+  EArrIdx id [EDimen d] -> do vec <- getVar id
+                              idx <- exprCode d
+                              getelem vec idx (Prim t)
                        
 {-
- | EArr Type [ArrDimen]
  | EArrIdx Ident [ArrDimen]
- | EArrLen Ident
  | EArrMDLen Ident [ArrDimen]
 -}
   _  -> undefined
@@ -456,62 +459,51 @@ bitcast v t = do r <- newRegister
                  putCode [show r ++ " = bitcast " ++ show v ++ " to " ++ show t]
                  return (VReg t r)
 
-setelem :: Value -> Value -> Value -> Type ->  Result ()
-setelem vector index elem t = do e <- newRegister
-                                 r0 <- newRegister
-                                 putCode [show e ++ " = bitcast " ++ show t ++ " to i8*"]
-                                 putCode [show r0 ++ " = getelementptr inbounds " ++ show vector ++ ", i32 0, i32 1"]
-                                 r1 <- load (VVec r0)
-                                 r2 <- newRegister
-                                 putCode [show r2 ++ " = getelementptr inbounds " ++ show  index]
-                                 store elem (VVec r2)
-                                 return ()
+setelem :: Value -> Value -> Value -> LLVMType -> Result ()
+setelem vector index elem t = do vec0 <- newRegister
+                                 putCode [show vec0 ++ " = getelementptr inbounds " ++ show vector
+                                         ,", i32 0, i32 1"]
+                                 vec1 <- load (VReg (Ptr (Ptr t)) vec0)
 
-getelem :: Value -> Value -> LLVMType -> Result Value
-getelem vector index t = do r0 <- newRegister
-                            putCode [show r0 ++ " = getelementptr inbounds " ++ show vector ++ ", i32 0, i32 1"]
-                            r1 <- load (VVec r0)
-                            r2 <- newRegister
-                            putCode [show r2 ++ " = getelementptr inbounds " ++ show r1 ++ ", " ++ show index]
-                            r3 <- load (VVec r2)
-                            elem <- newRegister
-                            putCode [show elem ++ " = bitcast " ++ show r3 ++ " to " ++ show t]
-                            return (VReg t elem)
+                                 e <- newRegister
+                                 putCode [show e ++ " = getelementptr inbounds " ++ show vec1 ++ ", " ++ show index]
+
+                                 store elem (VReg (Ptr t) e)
+
+                                 
+
+getelem :: Value -> Value  -> LLVMType -> Result Value
+getelem vector index t= do vec0 <- newRegister
+                           putCode[show vec0 ++ " = getelementptr inbounds " ++ show vector ++ 
+                                            ", i32 0, i32 1"]
+                           vec1 <- load (VReg (Ptr (Ptr t)) vec0)
+                           val <- newRegister
+                           putCode[show val ++ " = getelementptr inbounds " ++ show vec1 ++ 
+                                        ", " ++ show index]
+                           load (VReg (Ptr t) val)
+
 sizeof :: LLVMType -> Result Value
 sizeof t = do r0 <- newRegister
               putCode [show r0 ++ " = getelementptr " ++ show (Ptr t) ++ " null, i32 1"]
               r1 <- newRegister
               putCode [show r1 ++ " = ptrtoint " ++ show (Ptr t) ++ " " ++ show r0 ++ " to i32"]
               return (VReg (Prim Int) r1)
-{-
-newvec :: Value -> LLVMType -> Result Value
-newvec len t= do vec <- newRegister
-                 alloca vec Vector
-                 sz <- sizeof t
-                 r0 <- calloc len sz
-                 r1 <- bitcast r0 Vector
-                 store r1 (VReg (Ptr Vector) vec)
-                 v0 <- load (VReg (Ptr Vector) vec)
-                 r2 <- newRegister
-                 putCode [show r2 ++ " = getelementptr inbounds " ++ show v0 ++ ", i32 0, i32 0"]
-                 store len (VReg (Ptr (Prim Int)) r2)
-                 r3 <- load (VReg (Ptr Vector) vec)
-                 return r3
--}
+
 newvec :: Value -> LLVMType -> Result Value
 newvec len t = do vec <- newRegister
-                  alloca vec Vector
+                  alloca vec (Vector t)
                   sz <- sizeof t
                   xs0 <- calloc len sz
-                  xs1 <- bitcast xs0 (Ptr (Ptr I8))
+                  xs1 <- bitcast xs0 (Ptr t)
                   r0 <- newRegister
-                  putCode [show r0 ++ " = getelementptr inbounds " ++ show (VReg (Ptr Vector) vec) ++ ", i32 0, i32 1"]
-                  store xs1 (VReg (Ptr (Ptr (Ptr I8))) r0)
+                  putCode [show r0 ++ " = getelementptr inbounds " ++ show (VReg (Ptr (Vector t)) vec) ++ ", i32 0, i32 1"]
+                  store xs1 (VReg (Ptr (Ptr t)) r0)
                   r1 <- newRegister
-                  putCode [show r1 ++ " = getelementptr inbounds " ++ show (VReg (Ptr Vector) vec) ++ ", i32 0, i32 0"]
+                  putCode [show r1 ++ " = getelementptr inbounds " ++ show (VReg (Ptr (Vector t)) vec) ++ ", i32 0, i32 0"]
                   store len (VReg (Ptr (Prim Int)) r1)
-                  v0 <- load (VReg (Ptr Vector) vec)
+                  v0 <- load (VReg (Ptr (Vector t)) vec)
                   return v0
+
 
 veclen :: Value -> Result Value
 veclen vec = do l <- newRegister
@@ -530,8 +522,8 @@ llvmType Int = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType Bool = "i1"
-llvmType (ArrInt _) = "%struct.vector"
-llvmType (ArrDoub _) = "%struct.vector"
+llvmType (ArrInt _) = "{i32, i32*}"
+llvmType (ArrDoub _) = "{i32, double*}"
 llvmType _    = undefined
 
 -- | Get the string repr. of a Value without it's type.
