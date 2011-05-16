@@ -256,7 +256,46 @@ stmtCode stmt = case stmt of
                                           idx <- exprCode d
                                           vec <- getVar id
                                           setelem vec idx val (Prim t)
-  For t id0 id1 s                   -> undefined
+  For t id0 id1 s                   -> do cnt <- newRegister
+                                          alloca cnt (Prim Int)
+                                          let counter = (VReg (Ptr (Prim Int)) cnt)
+                                          store (VInt 0) counter
+
+                                          vector <- getVar id1
+                                          len <- veclen vector
+
+                                          elem@(VReg _ r) <- addVar (Prim t) id0
+                                          alloca r (Prim t)
+
+                                          start <- getLabel
+                                          loop  <- getLabel
+                                          end   <- getLabel
+                                          
+                                          goto start
+
+                                          putLabel start
+
+                                          count <- load counter
+                                          comp <- cmp EQU count len
+                                          br comp loop end
+
+                                          putLabel loop
+                                                   
+                                          idx <- load counter
+
+                                          r <- getelem vector idx (Prim t)
+                                          store r elem -- PROBLEM HERE
+
+                                          stmtCode s
+
+                                          setelem vector idx elem (Prim t)
+
+                                          r1 <- add (VInt 1) idx
+                                          store r1 counter
+
+                                          goto start
+                                          
+                                          putLabel end
                                                  
 --  ArrAss id ds0 e@(TExp t _)        -> do val <- exprCode e
 --                                          idx <- mapM_ (\(EDimen e) -> exprCode e) ds0
