@@ -5,13 +5,7 @@ module CodeGeneration (genCode) where
 -- Imports.
 --------------------------------------------------------------------------------
 import AbsJavalette
-import PrintJavalette
-import ErrM
-import Debug.Trace
-import Data.List (nubBy, init, last)
-import Data.Maybe (fromJust)
 import Control.Monad.State
-
 import ReturnChecker
 --------------------------------------------------------------------------------
 
