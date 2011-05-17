@@ -6,6 +6,9 @@ module CodeGeneration (genCode) where
 --------------------------------------------------------------------------------
 import AbsJavalette
 import Control.Monad.State
+
+import Debug.Trace
+
 import ReturnChecker
 --------------------------------------------------------------------------------
 
@@ -328,7 +331,7 @@ exprCode (TExp t e) = case e of
                         v0 <- exprCode e0
                         x_cmp <- cmp NE v0 (VBit 0)
                         br x_cmp true false0
-                        putLabel false0 -- x == false
+                        putLabel false0
                         v1 <- exprCode e1
                         y_cmp <- cmp NE v1 (VBit 0)
                         br y_cmp true false1
@@ -347,6 +350,49 @@ exprCode (TExp t e) = case e of
                         xor v (VBit 1)
   EArr t [EDimen e] -> do len <- exprCode e
                           newvec len (Prim t)
+--  EArr t ds         -> do
+
+
+{-
+  EArr t' dimens     -> do 
+                           -- length of all arrays
+                           lens <- mapM (\(EDimen e) -> exprCode e) dimens
+                           -- types of all arrays
+                           let ts = f t'
+
+
+                           vecs <- mapM (\(l,t) -> newvec l (Prim t)) (zip lens ts)
+
+                           return (VInt 0)
+     where 
+       f :: Type -> [Type]
+       f (ArrInt []) = []
+       f e@(ArrInt (d:ds)) = e : f (ArrInt ds)
+       f (ArrDoub []) = []
+       f e@(ArrDoub (d:ds)) = e : f (ArrDoub ds)
+
+
+       g :: Value ->  Value -> Type -> Result Value
+       g v0 v1 = do r <- getelementptr v0 [VInt 0, VInt 1]
+                    store v1 (VReg t r)
+                    return (VReg 
+
+-}
+
+
+
+
+
+
+
+{-
+  or, I could do something where I:
+  1. Create a list of all the lengths combined with the type
+  2. Create a list of pointers to all the sub arrays.
+  3. ''Concat'' the list.
+-}
+                          
+
   EArrLen id        -> getVar id >>= veclen
   EArrIdx id [EDimen d] -> do vec <- getVar id
                               idx <- exprCode d
@@ -492,6 +538,42 @@ newvec len t = do
     v0 <- load (VReg (Ptr (Vector t)) vec)
     return v0
 
+newmdvec :: [ArrDimen] -> LLVMType -> Result Value
+newmdvec ((EDimen d):ds)  t = do
+  len <- exprCode d
+  vec <- newvec len d
+
+  vecass vec len t
+
+
+vecass :: Value -> Value -> LLVMType -> Result Value
+vecass vec len t = do start <- getLabel
+                      loop  <- getLabel
+                      end   <- getLabel
+
+                      c <- newRegister
+                      alloca c (Prim Int)
+                      let count = (VReg (Ptr (Prim Int)) c)
+                      store (VInt 0) count
+                      l <- veclen vec
+
+                      goto start
+                      putLabel start
+
+                      idx <- load count
+                      comp <- cmp LTH idx l
+                      br comp loop end
+
+                      putLabel loop
+
+                      q <- newvec len t
+                      setelem vec idx q t
+                      
+                      goto start
+
+                      putLabel end
+                      return vec
+
 veclen :: Value -> Result Value
 veclen vec = do l <- getelementptr vec [VInt 0, VInt 0]
                 len <- load (VReg (Ptr (Prim Int)) l)
@@ -541,4 +623,4 @@ isInt (VBit i)      = True
 
 isInts :: Value -> Value -> Bool
 isInts a b = isInt a && isInt b
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------- 
