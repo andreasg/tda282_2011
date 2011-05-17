@@ -129,7 +129,6 @@ getVar :: Ident -> Result Value
 getVar id@(Ident n) = do s <- get
                          case dropWhile (==Nothing) (map (lookup id) (vars s)) of
                             (Just (t,r):_) -> return (VReg (Ptr t) r)
-                            []             -> undefined --return (VPtr t (Reg n))
 --------------------------------------------------------------------------------
 
 
@@ -504,7 +503,6 @@ getelementptr vec is = do r <- newRegister
                                   ,show vec ++ idx]
                           return r
     where idx = concat $ map (\v -> ", " ++ show v) is
-
 --------------------------------------------------------------------------------
 
 
@@ -517,8 +515,10 @@ llvmType Int = "i32"
 llvmType Doub = "double"
 llvmType Void = "void"
 llvmType Bool = "i1"
-llvmType (ArrInt _) = "{i32, i32*}"
-llvmType (ArrDoub _) = "{i32, double*}"
+llvmType (ArrInt [d]) = "{i32, i32*}"
+llvmType (ArrInt ds)  = "{i32, i8*}"
+llvmType (ArrDoub [d]) = "{i32, double*}"
+llvmType (ArrDoub ds)  = "{i32, i8*}"
 llvmType _    = undefined
 
 -- | Get the string repr. of a Value without it's type.

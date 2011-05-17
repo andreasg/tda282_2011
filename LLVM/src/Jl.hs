@@ -50,8 +50,7 @@ compile n compile s = case pProgram (myLexer s) of
                                                    let code = genCode p
                                                    writeFile (dir ++ "/" ++ name++".ll") code
                                                    if compile 
-                                                     then do runCommand $ "llvm-as " ++ (dir ++ "/" ++ name++".ll")
-                                                             runCommand $ "llvm-ld " ++ name++".bc" ++ " runtime.bc"
+                                                     then do runCommand $ "llvm-as " ++ (dir ++ "/" ++ name++".ll") ++ " && " ++ "llvm-ld " ++ name++".bc" ++ " lib/runtime.bc"
                                                              return ()
                                                      else return ()
 
