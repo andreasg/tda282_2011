@@ -31,10 +31,9 @@ data LLVMType = Prim Type | Ptr LLVMType | Vector LLVMType | I8
               deriving (Eq)
 instance Show LLVMType where
     show t = case t of
-               Prim t -> llvmType t
+               Prim t -> showType t
                Ptr ts -> show ts ++ "*"
                I8     -> "i8"
-               Vector (Prim t) -> "{i32, " ++ llvmType t ++ "*}"
                Vector t -> "{i32, " ++ show t ++ "*}"
 -- | Datatype for LLVM Registers
 data Register = Reg String
@@ -348,56 +347,19 @@ exprCode (TExp t e) = case e of
   Not e           -> do v <- exprCode e
                         xor v (VBit 1)
   EArr t [EDimen e] -> do len <- exprCode e
-                          newvec len (Prim t) >>= load
+                          newvec len (Vector (Prim t)) >>= load
 
-  EArr t' ds         -> do newmdvec ds (Prim t)
---  EArr t ds         -> do
-
-
-{-
-  EArr t' dimens     -> do 
-                           -- length of all arrays
-                           lens <- mapM (\(EDimen e) -> exprCode e) dimens
-                           -- types of all arrays
-                           let ts = f t'
-
-
-                           vecs <- mapM (\(l,t) -> newvec l (Prim t)) (zip lens ts)
-
-                           return (VInt 0)
-     where 
-       f :: Type -> [Type]
-       f (ArrInt []) = []
-       f e@(ArrInt (d:ds)) = e : f (ArrInt ds)
-       f (ArrDoub []) = []
-       f e@(ArrDoub (d:ds)) = e : f (ArrDoub ds)
-
-
-       g :: Value ->  Value -> Type -> Result Value
-       g v0 v1 = do r <- getelementptr v0 [VInt 0, VInt 1]
-                    store v1 (VReg t r)
-                    return (VReg 
-
--}
-
-
-
-
-
-
-
-{-
-  or, I could do something where I:
-  1. Create a list of all the lengths combined with the type
-  2. Create a list of pointers to all the sub arrays.
-  3. ''Concat'' the list.
--}
-                          
+  EArr t' ds         -> do newmdvec ds (arr2vec t) >>= load
 
   EArrLen id        -> getVar id >>= veclen
   EArrIdx id [EDimen d] -> do vec <- getVar id
                               idx <- exprCode d
                               getelem vec idx (Prim t)
+  EArrMDLen id ds -> do lens <- mapM (\(EDimen d) -> exprCode d) ds
+                        var <- getVar id
+                        vec <- getelementptr var lens
+                        veclen (VReg (arr2vec t) vec)
+
 --  EArrIdx id ds -> do vec <- getVar id
 --                      getMDelem vec ds t
 
@@ -405,17 +367,6 @@ exprCode (TExp t e) = case e of
  | EArrMDLen Ident [ArrDimen]
 -}
   x  -> trace (show x) (return (VInt 0))
-
---getMDelem vec [EDimen d]  t       = do idx <- exprCode d
---                                       getelem vec idx (Prim t)
---
---getMDelem vec (EDimen d:ds) t     = do idx <- exprCode d
---                                       r <- getelem vec idx t0
---                                       getMDelem r ds t
---                                                 where t0 = if t == Doub then Ptr $ Prim (ArrDoub $ take (length ds) (repeat ArrItem))
---                                                                         else Ptr $ Prim (ArrInt $
---                                                                                   take (length ds) (repeat ArrItem))
-                                                                
 --------------------------------------------------------------------------------
 
 
@@ -540,43 +491,35 @@ sizeof t = do r0 <- newRegister
               return (VReg (Prim Int) r1)
 
 newvec :: Value -> LLVMType -> Result Value
-newvec len t = do
-    vec <- newRegister
-    alloca vec (Vector t)
-    sz <- sizeof t
-    xs0 <- calloc len sz
-    xs1 <- bitcast xs0 (Ptr t)
-    r0 <- getelementptr (VReg (Ptr (Vector t)) vec) [VInt 0, VInt 1]
-    store xs1 (VReg (Ptr (Ptr t)) r0)
-    r1 <- getelementptr (VReg (Ptr (Vector t)) vec) [VInt 0, VInt 0]
-    store len (VReg (Ptr (Prim Int)) r1)
-    return (VReg (Ptr (Vector t)) vec)
+newvec len t@(Vector t0) = do
+  vec <- newRegister
+  let vector = (VReg (Ptr t) vec)
+  alloca vec t
+  sz <- sizeof t0
+  xs0 <- calloc len sz
+  xs1 <- bitcast xs0 (Ptr t0)
+
+  -- save vector
+  r0 <- getelementptr vector [VInt 0, VInt 1]
+  store xs1 (VReg (Ptr (Ptr t0)) r0)
+
+  -- save vector length
+  r1 <- getelementptr vector [VInt 0, VInt 0]
+  store len (VReg (Ptr (Prim Int)) r1)
+
+  return vector
 
 newmdvec :: [ArrDimen] -> LLVMType -> Result Value
-newmdvec blah@(EDimen d:ds) (Prim t) = do
-
-
+newmdvec blah@(EDimen d:ds) t@(Vector ts) = do
   len <- exprCode d
+  vec <- newvec len t
   lens <- mapM (\(EDimen d) -> exprCode d) ds
-  let ts = tail $ f t
-
-  vec <- newvec len (Prim t)
-
   vecass vec lens ts
-
   return vec
 
-  where
-       f :: Type -> [LLVMType]
-       f (ArrInt []) = []
-       f e@(ArrInt (d:ds)) = (Prim e) : f (ArrInt ds)
-       f (ArrDoub []) = []
-       f e@(ArrDoub (d:ds)) = (Prim e) : f (ArrDoub ds)
-       f  t = trace (show t) []
-
-vecass :: Value -> [Value] -> [LLVMType] -> Result ()
-vecass vec [] [] = return ()
-vecass vec (len:len') (t:t') 
+vecass :: Value -> [Value] -> LLVMType -> Result ()
+vecass vec [] t = return ()
+vecass vec (len:len') t@(Vector ts)
                  = do start <- getLabel
                       loop  <- getLabel
                       end   <- getLabel
@@ -596,23 +539,16 @@ vecass vec (len:len') (t:t')
 
                       putLabel loop
 
-                      
                       q <- newvec len t
 
-                      vecass q len' t'
+                      vecass q len' ts
 
-
-
-
-                      vec0 <- getelementptr vec [VInt 0, VInt 1]
-                      vec1 <- load (VReg (Ptr (Ptr I8)) vec0)
-                      e <- getelementptr vec1 [idx]
-                      store (VReg (Ptr t) e) q
-
-
+                      q0 <- load q
+                      
+                      setelem vec idx q0 t
 
                       tmp <- add (VInt 0) idx
-                      store tmp idx
+                      store tmp count
 
                       goto start
 
@@ -637,16 +573,12 @@ getelementptr vec is = do r <- newRegister
 -- Utils.
 --------------------------------------------------------------------------------
 -- | Get the LLVM repr. of a Javalette type.
-llvmType :: Type -> String
-llvmType Int = "i32"
-llvmType Doub = "double"
-llvmType Void = "void"
-llvmType Bool = "i1"
-llvmType (ArrInt [d]) = "{i32, i32*}"
-llvmType (ArrInt ds)  = "i8"
-llvmType (ArrDoub [d]) = "{i32, double*}"
-llvmType (ArrDoub ds)  = "i8"
-llvmType t    = undefined
+showType :: Type -> String
+showType Int = "i32"
+showType Doub = "double"
+showType Void = "void"
+showType Bool = "i1"
+showType vec    = show $ arr2vec vec
 
 -- | Get the string repr. of a Value without it's type.
 unValue :: Value -> String
@@ -666,6 +598,12 @@ isInt (VInt _)      = True
 isInt (VDoub _)     = False
 isInt (VBit i)      = True
 
+arr2vec :: Type -> LLVMType
+arr2vec (ArrInt [d])    = Vector (Prim Int)
+arr2vec (ArrInt (d:ds)) = Vector (arr2vec (ArrInt ds))
+arr2vec (ArrDoub [d])    = Vector (Prim Doub)
+arr2vec (ArrDoub (d:ds)) = Vector (arr2vec (ArrDoub ds))
+
 isInts :: Value -> Value -> Bool
 isInts a b = isInt a && isInt b
--------------------------------------------------------------------------------- 
+--------------------------------------------------------------------------------
