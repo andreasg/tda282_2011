@@ -34,7 +34,7 @@ instance Show LLVMType where
                Prim t -> showType t
                Ptr ts -> show ts ++ "*"
                I8     -> "i8"
-               Vector t -> "{i32, " ++ show t ++ "*}"
+               Vector t            -> "{i32, " ++ show t ++ "*}"
 -- | Datatype for LLVM Registers
 data Register = Reg String
     deriving Eq
@@ -84,6 +84,15 @@ genCode p = let (_,e) = runEnv p
 -- | Render an environment.
 runEnv :: Program -> ((),Env)
 runEnv (Program topDefs) = runState (mapM_ topdefCode topDefs) emptyEnv
+
+
+runStmt :: Stmt -> String
+runStmt s = let (_,e) = runState (stmtCode s) emptyEnv
+            in  unlines (reverse $ code e)
+
+runExpr :: Expr -> String
+runExpr s = let (_,e) = runState (exprCode s) emptyEnv
+            in  unlines (reverse $ code e)
 --------------------------------------------------------------------------------
 
 
@@ -238,7 +247,7 @@ stmtCode stmt = case stmt of
   ArrAss id [EDimen d] e@(TExp t _) -> do val <- exprCode e
                                           idx <- exprCode d
                                           vec <- getVar id
-                                          setelem vec idx val (Prim t)
+                                          setelem vec [idx] val (Prim t)
   For t id0 id1 s                   -> do cnt <- newRegister
                                           alloca cnt (Prim Int)
                                           let counter = (VReg (Ptr (Prim Int)) cnt)
@@ -257,11 +266,11 @@ stmtCode stmt = case stmt of
                                           br comp loop end
                                           putLabel loop
                                           idx <- load counter
-                                          r <- getelem vector idx (Prim t)
+                                          r <- getelem vector [idx] (Prim t)
                                           store r elem
                                           stmtCode s
                                           v <- load elem
-                                          setelem vector idx v (Prim t)
+                                          setelem vector [idx] v (Prim t)
                                           r1 <- add (VInt 1) idx
                                           store r1 counter
                                           goto start
@@ -354,7 +363,7 @@ exprCode (TExp t e) = case e of
   EArrLen id        -> getVar id >>= veclen
   EArrIdx id [EDimen d] -> do vec <- getVar id
                               idx <- exprCode d
-                              getelem vec idx (Prim t)
+                              getelem vec [idx] (Prim t)
   EArrMDLen id ds -> do lens <- mapM (\(EDimen d) -> exprCode d) ds
                         var <- getVar id
                         vec <- getelementptr var lens
@@ -467,28 +476,55 @@ bitcast v t = do r <- newRegister
                  putCode [show r ++ " = bitcast " ++ show v ++ " to " ++ show t]
                  return (VReg t r)
 
-setelem :: Value -> Value -> Value -> LLVMType -> Result ()
-setelem vector index elem t = do
+setelem :: Value -> [Value] -> Value -> LLVMType -> Result ()
+setelem vector [index] elem t = do
   vec0 <- getelementptr vector [VInt 0, VInt 1]
   vec1 <- load (VReg (Ptr (Ptr t)) vec0)
   e <- getelementptr vec1 [index]
   store elem (VReg (Ptr t) e)
 
-getelem :: Value -> Value  -> LLVMType -> Result Value
-getelem vector index t= do
+setelem vector@(VReg (Ptr (Vector t0)) _) (i:is) elem t = do
+  vec0 <- getelementptr vector [VInt 0, VInt 1, i]
+  v <- load (VReg (Ptr t0) vec0)
+  setelem v is elem t 
+
+getelem :: Value -> [Value]  -> LLVMType -> Result Value
+getelem vector@(VReg (Ptr (Vector (Vector t0))) _) (i:is) t = do
+  vec0 <- getelementptr vector [VInt 0, VInt 1]
+  vec1 <- load (VReg (Ptr (Ptr (Vector t0))) vec0)
+  e <- getelementptr vec1 [i]
+  
+  getelem (VReg (Ptr (Vector t0)) e) is t
+
+--  v <- load (VReg (Ptr t0) vec0)
+--  getelem v is t
+
+
+
+
+
+{-
+                      ni <- load count
+                      vA <- getelementptr vec [VInt 0, VInt 1]
+                      b0 <- load (VReg (Ptr (Ptr t)) vA)
+                      vB <- getelementptr b0 [ni]
+                      vC <- getelementptr (VReg (Ptr t) vB) [VInt 0, VInt 1]
+                      store  nv   (VReg (Ptr (Ptr ts)) vC)                      
+-}
+
+
+getelem vector [index] t = do
   vec0 <- getelementptr vector [VInt 0, VInt 1]
   vec1 <- load (VReg (Ptr (Ptr t)) vec0)
   val  <- getelementptr vec1 [index]
   load (VReg (Ptr t) val)
 
+
 sizeof :: LLVMType -> Result Value
-sizeof t = do r0 <- newRegister
-              putCode [show r0 ++ " = getelementptr " ++
-                            show (Ptr t) ++ " null, i32 1"]
-              r1 <- newRegister
-              putCode [show r1 ++ " = ptrtoint " ++
-                            show (Ptr t) ++ " " ++ show r0 ++ " to i32"]
-              return (VReg (Prim Int) r1)
+sizeof (Prim Int)  = return $ VInt 4
+sizeof (Prim Doub) = return $ VInt 8
+sizeof (Ptr _)     = return $ VInt 8
+sizeof (Vector _)  = return $ VInt 16
 
 newvec :: Value -> LLVMType -> Result Value
 newvec len t@(Vector t0) = do
@@ -539,15 +575,29 @@ vecass vec (len:len') t@(Vector ts)
 
                       putLabel loop
 
-                      q <- newvec len t
+                      vec0 <- getelementptr vec [VInt 0, VInt 1]
 
-                      vecass q len' ts
+                      let tx = case t of 
+                                   (Vector (Vector _)) -> Ptr (Ptr t)
+                                   _                   -> Ptr (Ptr ts)
+                      b <- load (VReg tx vec0)
+                      v16 <- getelementptr b [idx]
+                      v17 <- getelementptr (VReg (Ptr t) v16) [VInt 0, VInt 0]
+                      store len (VReg (Ptr (Prim Int)) v17)
 
-                      q0 <- load q
+                      sz <- sizeof t
+                      nv <- calloc len sz >>= (\x -> bitcast x (Ptr ts))
                       
-                      setelem vec idx q0 t
+                      ni <- load count
+                      vA <- getelementptr vec [VInt 0, VInt 1]
+                      b0 <- load (VReg (Ptr (Ptr t)) vA)
+                      vB <- getelementptr b0 [ni]
+                      vC <- getelementptr (VReg (Ptr t) vB) [VInt 0, VInt 1]
+                      store  nv   (VReg (Ptr (Ptr ts)) vC)
 
-                      tmp <- add (VInt 0) idx
+                      vecass nv len' ts
+
+                      tmp <- add (VInt 1) idx
                       store tmp count
 
                       goto start
