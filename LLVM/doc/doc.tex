@@ -1,0 +1,71 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[latin1]{inputenc}
+\usepackage{url}
+\usepackage[all]{xy}
+\usepackage{amsmath}
+\usepackage{listings}
+\lstset{language=C}
+
+\title{{\sc Compiler Construction}\\ TDA282 \\ Submission B}
+
+\author{Andreas Granstr\"om, 870208-8512 \\ \url{andgra@student.chalmers.se} \and Viktor Almqvist, 870624-5613 \\ \url{almqvisv@student.chalmers.se}}
+\begin{document}
+\maketitle
+
+
+\section{List of optional extensions}
+\begin{itemize}
+\item Single-dimensional arrays
+\item Multi-dimensional arrays
+\end{itemize}
+
+\section{Usage}
+\texttt{jlc <source file>} \\ This will produce a binary file
+\texttt{a.out} and a LLVM source file (extension \texttt{.ll}) in the
+same directory as the supplied source file.
+
+\subsection{Options}
+\begin{description}
+\item[-t] One can pass the \texttt{-t} option to the compliler
+  (ex. \texttt{jlc -t <source file>}), this will print (to standard
+  output) the type-annotated abstract syntaxt-tree that the
+  typechecker pass to the code-generator. This is mostly used for
+  debugging purpuses. Note, this will not comiple the source file.
+\item[-nc or --no-compile] Only output the intermediate LLVM-code.
+\end{description}
+
+\subsection{Building}
+To bulild the compiler, run \texttt{make} in the \texttt{src} directory, it will then produce the \texttt{jlc} binary in the directory ``above''.
+
+The available targets are
+\begin{description}
+\item[all] Build everything.
+\item[jlc] Only build the compiler (not the parser-part).
+\item[runtime] Compile the Runtime class.
+\item[bnfc] Only build parser-related stuff (Happy and Alex files).
+\item[clean] Remove binaries etc.
+\item[distclean] Remove all intermediate files, including Happy and Alex files.
+\end{description}
+
+
+\section{The Javalette Language}
+After running \texttt{make} in the \texttt{src} dir, view the
+\texttt{DocJavalette.txt} file (or build the \texttt{DocJavalette.tex}
+file with \LaTeX) for documentation of the language.
+
+\section{Parser issues}
+\subsection{shift/reduce}
+We have one shift/reduce error in our parser. It is the ``dangling else''
+problem, i.e., we have an ambiguity in our grammar. 
+
+Example:
+\begin{lstlisting}
+  if (A) if (B) ; else;
+\end{lstlisting}
+
+As our language is specified, it is ambigious if the \texttt{else}
+belongs to \texttt{if (A)} or \texttt{if (B)}.
+
+
+\end{document}

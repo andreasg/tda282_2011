@@ -126,7 +126,7 @@ addVar t id@(Ident n) =
 
 -- | Retrieve a pointer to a variable.
 getVar :: Ident -> Result Value
-getVar id@(Ident n) = do 
+getVar id@(Ident n) = do
   s <- get
   case dropWhile (==Nothing) (map (lookup id) (vars s)) of
     (Just (t,r):_) -> return (VReg (Ptr t) r)
@@ -141,7 +141,7 @@ topdefCode (FnDef t (Ident id) args (Block bs)) =
  do
   modify $ \e -> e {nextRegister = 1, vars = [[]]}
   putCode ["define " ++ show (Prim t) ++ " @" ++ id ++ "(" ++ f args ++ ") {"]
-  mapM_ (\(Arg t (Ident id)) -> do var@(VReg t' r) <- 
+  mapM_ (\(Arg t (Ident id)) -> do var@(VReg t' r) <-
                                        addVar (type2llvmtype t) (Ident id)
                                    alloca r (Prim t)
                                    store (VReg (Prim t) (Reg id)) var) args
@@ -247,8 +247,8 @@ stmtCode stmt = case stmt of
                                           is  <- mapM (\(EDimen d) -> exprCode d) ds
                                           val <- exprCode e
                                           setelem vec is val
-  For t id0 id1 s                   -> do counter <- newRegister >>= 
-                                                     (\r -> alloca r (Prim Int) >> 
+  For t id0 id1 s                   -> do counter <- newRegister >>=
+                                                     (\r -> alloca r (Prim Int) >>
                                                             return (VReg (Ptr (Prim Int)) r))
                                           store (VInt 0) counter
                                           vector <- getVar id1
@@ -354,13 +354,8 @@ exprCode (TExp t e) = case e of
                         where zero = if t == Doub then VDoub 0.0 else VInt 0
   Not e           -> do v <- exprCode e
                         xor v (VBit 1)
-  EArr t [EDimen e] -> do len <- exprCode e
-                          newvec len (Vector (Prim t)) >>= load
   EArr t' ds         -> do newmdvec ds (type2llvmtype t) >>= load
   EArrLen id        -> getVar id >>= (\t -> veclen t [])
---  EArrIdx id [EDimen d] -> do vec <- getVar id
---                              idx <- exprCode d
---                              getelem vec [idx]
   EArrIdx id ds -> do vec <- getVar id
                       ids <- mapM (\(EDimen d) -> exprCode d) ds
                       getelem vec ids
@@ -470,7 +465,7 @@ bitcast v t = do r <- newRegister
 setelem :: Value -> [Value] -> Value -> Result ()
 setelem vec [] val = store val vec
 setelem vec@(VReg (Ptr (Vector t)) _) (i:is) val = do
-  vec0 <- getelementptr vec [VInt 0, VInt 1] >>= 
+  vec0 <- getelementptr vec [VInt 0, VInt 1] >>=
           (\r -> load (VReg (Ptr (Ptr t)) r ))
   elem <- getelementptr vec0 [i]
   setelem (VReg (Ptr t) elem) is val
@@ -478,7 +473,7 @@ setelem vec@(VReg (Ptr (Vector t)) _) (i:is) val = do
 getelem :: Value -> [Value] -> Result Value
 getelem vec [] = load vec
 getelem vec@(VReg (Ptr (Vector t)) _) (i:is) = do
-  vec0 <- getelementptr vec [VInt 0, VInt 1] >>= 
+  vec0 <- getelementptr vec [VInt 0, VInt 1] >>=
           (\r -> load (VReg (Ptr (Ptr t)) r))
   elem <- getelementptr vec0 [i]
   getelem (VReg (Ptr t) elem) is
@@ -520,7 +515,7 @@ vecass vlen (vec@(VReg (Ptr (Vector t)) r)) (l:ls) = do
   start <- getLabel
   loop  <- getLabel
   end   <- getLabel
-  count <- newRegister >>= (\r -> alloca r (Prim Int) >> 
+  count <- newRegister >>= (\r -> alloca r (Prim Int) >>
                                   return (VReg (Ptr (Prim Int)) r))
   store (VInt 0) count
   goto start
@@ -529,15 +524,15 @@ vecass vlen (vec@(VReg (Ptr (Vector t)) r)) (l:ls) = do
   comp <- cmp LTH idx vlen
   br comp loop end
   putLabel loop
-  vec0 <- getelementptr vec [VInt 0, VInt 1] >>= 
+  vec0 <- getelementptr vec [VInt 0, VInt 1] >>=
           (\r -> load (VReg (Ptr (Ptr t)) r))
-  elem <- getelementptr vec0 [idx] >>= (\r -> return (VReg (Ptr t) r))  
-  elem_len <- getelementptr elem [VInt 0, VInt 0] >>= 
+  elem <- getelementptr vec0 [idx] >>= (\r -> return (VReg (Ptr t) r))
+  elem_len <- getelementptr elem [VInt 0, VInt 0] >>=
               (\r -> return (VReg (Ptr (Prim Int)) r))
   store l elem_len
   sz <- sizeof (f t)
   inner_vec <- calloc l sz >>= (\v -> bitcast v (Ptr (f t)))
-  elem_vec <- getelementptr elem [VInt 0, VInt 1] >>= 
+  elem_vec <- getelementptr elem [VInt 0, VInt 1] >>=
               (\r -> return (VReg (Ptr (Ptr (f t))) r))
   store inner_vec elem_vec
   vecass l elem ls
@@ -552,7 +547,7 @@ veclen :: Value -> [Value] -> Result Value
 veclen vec [] =  do l <- getelementptr vec [VInt 0, VInt 0]
                     load (VReg (Ptr (Prim Int)) l)
 veclen vec@(VReg (Ptr (Vector t)) _) (i:is) = do
-  vec0 <- getelementptr vec [VInt 0, VInt 1] >>= 
+  vec0 <- getelementptr vec [VInt 0, VInt 1] >>=
           (\r -> load (VReg (Ptr (Ptr t)) r))
   elem <- getelementptr vec0 [i]
   veclen (VReg (Ptr t) elem) is
@@ -599,7 +594,7 @@ isInts :: Value -> Value -> Bool
 isInts a b = isInt a && isInt b
 
 type2llvmtype :: Type -> LLVMType
-type2llvmtype (ArrInt [d])    = Vector (Prim Int)  
+type2llvmtype (ArrInt [d])    = Vector (Prim Int)
 type2llvmtype (ArrInt (d:ds)) = Vector (type2llvmtype (ArrInt ds))
 type2llvmtype (ArrDoub [d])    = Vector (Prim Doub)
 type2llvmtype (ArrDoub (d:ds)) = Vector (type2llvmtype (ArrDoub ds))
