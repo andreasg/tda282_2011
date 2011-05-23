@@ -247,7 +247,8 @@ stmtCode stmt = case stmt of
                                           is  <- mapM (\(EDimen d) -> exprCode d) ds
                                           val <- exprCode e
                                           setelem vec is val
-  For t id0 id1 s                   -> do counter <- newRegister >>=
+  For t id0 id1 s                   -> do modify (\s -> s {vars = ([]:vars s)})
+                                          counter <- newRegister >>=
                                                      (\r -> alloca r (Prim Int) >>
                                                             return (VReg (Ptr (Prim Int)) r))
                                           store (VInt 0) counter
@@ -274,6 +275,8 @@ stmtCode stmt = case stmt of
                                           store r1 counter
                                           goto start
                                           putLabel end
+                                          -- exit the scope
+                                          modify (\s -> s {vars = tail (vars s)})
 --------------------------------------------------------------------------------
 
 
